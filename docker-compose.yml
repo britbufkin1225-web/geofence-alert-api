@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: geofence-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: geofence_user
+      POSTGRES_PASSWORD: geofence_password
+      POSTGRES_DB: geofence_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - geofence_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  geofence_postgres_data:
