@@ -116,23 +116,24 @@ Latitude and longitude are kept separately for readability and API response form
 
 ---
 
-## alert_events
+## Table: alert_events
 
-Stores alert records generated when a tracked entity triggers a geofence rule.
+Stores alert records generated when a tracked device enters, exits, or violates a geofence rule.
 
-| Column | Type | Required | Description |
-|---|---|---:|---|
-| id | UUID / string | Yes | Unique alert event identifier |
-| geofence_id | UUID / string | Yes | Geofence associated with the alert |
-| entity_id | string | Yes | Tracked entity, device, user, or asset that triggered the alert |
-| event_type | string | Yes | Type of alert, such as ENTER, EXIT, or VIOLATION |
-| severity | string | Yes | Alert severity: LOW, MEDIUM, HIGH, or CRITICAL |
-| latitude | decimal | Yes | Latitude where the alert was triggered |
-| longitude | decimal | Yes | Longitude where the alert was triggered |
-| message | text | Yes | Human-readable alert message |
-| status | string | Yes | Alert state: OPEN, ACKNOWLEDGED, RESOLVED, or IGNORED |
-| created_at | timestamp | Yes | Time the alert was created |
-| resolved_at | timestamp | No | Time the alert was resolved, if applicable |
+| Field | Type | Notes |
+| --- | --- | --- |
+| id | UUID | Primary key |
+| geofence_id | UUID | Foreign key to `geofences.id` |
+| device_id | UUID | Foreign key to `tracked_devices.id` |
+| location_event_id | UUID | Foreign key to `location_events.id` |
+| event_type | VARCHAR | Example: `enter`, `exit`, `violation` |
+| severity | VARCHAR | Example: `low`, `medium`, `high`, `critical` |
+| latitude | DECIMAL | Latitude where the alert was triggered |
+| longitude | DECIMAL | Longitude where the alert was triggered |
+| message | TEXT | Human-readable alert message |
+| status | VARCHAR | Example: `open`, `acknowledged`, `resolved`, `ignored` |
+| created_at | TIMESTAMP | Time the alert was created |
+| resolved_at | TIMESTAMP | Optional time the alert was resolved |
 
 ### Alert Event Notes
 
