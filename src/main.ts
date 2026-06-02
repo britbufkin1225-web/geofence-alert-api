@@ -1,18 +1,17 @@
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+
 import { AppModule } from './app.module';
 
-async function bootstrap(): Promise<void> {
+async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  const apiPrefix = process.env.API_PREFIX || 'api/v1';
-  app.setGlobalPrefix(apiPrefix);
+  const configService = app.get(ConfigService);
+  const port = configService.get<number>('PORT') ?? 3000;
 
-  const port = process.env.PORT || 3000;
   await app.listen(port);
 
-  console.log(
-    `GeoFence Alert API running on http://localhost:${port}/${apiPrefix}`,
-  );
+  console.log(`GeoFence Alert API is running on http://localhost:${port}`);
 }
 
 void bootstrap();
