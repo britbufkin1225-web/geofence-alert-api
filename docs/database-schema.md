@@ -116,26 +116,27 @@ Latitude and longitude are kept separately for readability and API response form
 
 ---
 
-## Table: alert_events
+## alert_events
 
-Stores geofence enter/exit alert history.
+Stores alert records generated when a tracked entity triggers a geofence rule.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| id | UUID | Primary key |
-| device_id | UUID | Foreign key to `tracked_devices.id` |
-| geofence_id | UUID | Foreign key to `geofences.id` |
-| location_event_id | UUID | Foreign key to `location_events.id` |
-| alert_type | VARCHAR | Example: `enter`, `exit` |
-| message | TEXT | Human-readable alert message |
-| severity | VARCHAR | Example: `low`, `medium`, `high` |
-| created_at | TIMESTAMP | Alert creation time |
+| Column | Type | Required | Description |
+|---|---|---:|---|
+| id | UUID / string | Yes | Unique alert event identifier |
+| geofence_id | UUID / string | Yes | Geofence associated with the alert |
+| entity_id | string | Yes | Tracked entity, device, user, or asset that triggered the alert |
+| event_type | string | Yes | Type of alert, such as ENTER, EXIT, or VIOLATION |
+| severity | string | Yes | Alert severity: LOW, MEDIUM, HIGH, or CRITICAL |
+| latitude | decimal | Yes | Latitude where the alert was triggered |
+| longitude | decimal | Yes | Longitude where the alert was triggered |
+| message | text | Yes | Human-readable alert message |
+| status | string | Yes | Alert state: OPEN, ACKNOWLEDGED, RESOLVED, or IGNORED |
+| created_at | timestamp | Yes | Time the alert was created |
+| resolved_at | timestamp | No | Time the alert was resolved, if applicable |
 
 ### Alert Event Notes
 
-Alert events allow the API to keep a history of geofence activity.
-
-This table supports future filtering by device, geofence, alert type, severity, and date range.
+Alert events are created when a submitted location event violates or crosses a geofence rule. For the MVP, geofence checks use a center latitude, center longitude, and radius in meters. Future versions may support polygon-based geofences and real-time notification delivery.
 
 ---
 
