@@ -30,7 +30,7 @@ Planned core features include:
 ## Tech Stack
 
 | Area | Tools |
-|---|---|
+| --- | --- |
 | Backend | NestJS, TypeScript, Node.js |
 | Database | PostgreSQL, PostGIS |
 | API Testing | Postman or Thunder Client |
@@ -64,7 +64,7 @@ Architecture diagrams and screenshots will be added as the project develops.
 Planned initial endpoints:
 
 | Method | Endpoint | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/api/v1/health` | Check API health |
 | GET | `/api/v1/status` | Return API status and metadata |
 | GET | `/api/v1/geofences` | List geofences |
@@ -79,13 +79,15 @@ Endpoint details will be updated as implementation progresses.
 Planned database entities:
 
 | Entity | Purpose |
-|---|---|
+| --- | --- |
 | Geofence | Stores named geofence areas and spatial boundaries |
 | Tracked Device | Stores device or location source details |
 | Location Event | Stores submitted latitude/longitude events |
 | Alert Event | Stores enter/exit alert history |
 
-Schema documentation will be added in the `docs/` folder.
+Detailed schema documentation is available in [Database Schema](docs/database-schema.md).
+
+The schema documentation explains planned tables, relationships, foreign keys, example data flow, backend value, and future database improvements.
 
 ## Project Management
 
@@ -96,7 +98,7 @@ The project board organizes work across backend API development, geospatial logi
 ### Workflow
 
 | Status | Purpose |
-|---|---|
+| --- | --- |
 | Backlog | Future features, ideas, and planned improvements |
 | Ready | Defined tasks ready for development |
 | In Progress | Work currently being built |
@@ -153,7 +155,7 @@ Testing notes will be documented as the project progresses.
 ## Roadmap
 
 | Phase | Focus | Status |
-|---|---|---|
+| --- | --- | --- |
 | Phase 1 | Project foundation | In Progress |
 | Phase 2 | Core API endpoints | Planned |
 | Phase 3 | Database schema | Planned |
