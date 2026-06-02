@@ -120,16 +120,16 @@ Latitude and longitude are kept separately for readability and API response form
 
 Stores geofence enter/exit alert history.
 
-| Field             | Type      | Notes                                |
-| ----------------- | --------- | ------------------------------------ |
-| id                | UUID      | Primary key                          |
-| device_id         | UUID      | Foreign key to `tracked_devices.id`  |
-| geofence_id       | UUID      | Foreign key to `geofences.id`        |
-| location_event_id | UUID      | Foreign key to `location_events.id`  |
-| alert_type        | VARCHAR   | Example: `enter`, `exit`             |
-| message           | TEXT      | Human-readable alert message         |
-| severity          | VARCHAR   | Example: `low`, `medium`, `high`     |
-| created_at        | TIMESTAMP | Alert creation time                  |
+| Field | Type | Notes |
+| --- | --- | --- |
+| id | UUID | Primary key |
+| device_id | UUID | Foreign key to `tracked_devices.id` |
+| geofence_id | UUID | Foreign key to `geofences.id` |
+| location_event_id | UUID | Foreign key to `location_events.id` |
+| alert_type | VARCHAR | Example: `enter`, `exit` |
+| message | TEXT | Human-readable alert message |
+| severity | VARCHAR | Example: `low`, `medium`, `high` |
+| created_at | TIMESTAMP | Alert creation time |
 
 ### Alert Event Notes
 
@@ -141,12 +141,12 @@ This table supports future filtering by device, geofence, alert type, severity, 
 
 ## Relationships
 
-| Relationship                         | Description                                             |
-| ------------------------------------ | ------------------------------------------------------- |
-| `tracked_devices` → `location_events` | One tracked device can create many location events      |
-| `tracked_devices` → `alert_events`    | One tracked device can create many alert events         |
-| `geofences` → `alert_events`          | One geofence can be associated with many alert events   |
-| `location_events` → `alert_events`    | One location event can trigger one or more alert events |
+| Relationship | Description |
+| --- | --- |
+| `tracked_devices` → `location_events` | One tracked device can create many location events |
+| `tracked_devices` → `alert_events` | One tracked device can create many alert events |
+| `geofences` → `alert_events` | One geofence can be associated with many alert events |
+| `location_events` → `alert_events` | One location event can trigger one or more alert events |
 
 ---
 
