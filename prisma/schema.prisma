@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model Geofence {
+  id           String       @id @default(cuid())
+  name         String
+  description  String?
+  latitude     Float
+  longitude    Float
+  radiusMeters Float
+  isActive     Boolean      @default(true)
+
+  alertEvents  AlertEvent[]
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model AlertEvent {
+  id          String        @id @default(cuid())
+  geofenceId  String
+  eventType   String
+  severity    AlertSeverity @default(MEDIUM)
+  status      AlertStatus   @default(OPEN)
+  message     String
+  source      String?
+  latitude    Float?
+  longitude   Float?
+
+  geofence    Geofence      @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
