@@ -12,12 +12,12 @@ PostgreSQL provides relational data storage, while PostGIS adds spatial data typ
 
 ## Planned Entities
 
-| Entity | Purpose |
-|---|---|
-| Geofence | Stores named geofence regions and spatial boundaries |
-| Tracked Device | Stores device or location source information |
+| Entity         | Purpose                                              |
+| -------------- | ---------------------------------------------------- |
+| Geofence       | Stores named geofence regions and spatial boundaries |
+| Tracked Device | Stores device or location source information         |
 | Location Event | Stores submitted latitude/longitude location records |
-| Alert Event | Stores enter/exit alert history |
+| Alert Event    | Stores enter/exit alert history                      |
 
 ---
 
@@ -51,19 +51,19 @@ When a location event enters or exits a geofence, the system can create an alert
 
 Stores geofence regions and spatial boundary data.
 
-| Field | Type | Notes |
-|---|---|---|
-| id | UUID | Primary key |
-| name | VARCHAR | Human-readable geofence name |
-| description | TEXT | Optional description |
-| boundary_type | VARCHAR | Example: `circle`, `polygon` |
-| center_latitude | DECIMAL | Used for circular geofences |
-| center_longitude | DECIMAL | Used for circular geofences |
-| radius_meters | INTEGER | Used for circular geofences |
-| polygon | GEOMETRY | Used for polygon geofences with PostGIS |
-| is_active | BOOLEAN | Enables or disables the geofence |
-| created_at | TIMESTAMP | Record creation time |
-| updated_at | TIMESTAMP | Last update time |
+| Field            | Type      | Notes                                      |
+| ---------------- | --------- | ------------------------------------------ |
+| id               | UUID      | Primary key                                |
+| name             | VARCHAR   | Human-readable geofence name               |
+| description      | TEXT      | Optional description                       |
+| boundary_type    | VARCHAR   | Example: `circle`, `polygon`               |
+| center_latitude  | DECIMAL   | Used for circular geofences                |
+| center_longitude | DECIMAL   | Used for circular geofences                |
+| radius_meters    | INTEGER   | Used for circular geofences                |
+| polygon          | GEOMETRY  | Used for polygon geofences with PostGIS    |
+| is_active        | BOOLEAN   | Enables or disables the geofence           |
+| created_at       | TIMESTAMP | Record creation time                       |
+| updated_at       | TIMESTAMP | Last update time                           |
 
 ### Geofence Notes
 
@@ -77,15 +77,15 @@ Polygon geofences can use PostGIS geometry fields for more complex spatial bound
 
 Stores device or location source information.
 
-| Field | Type | Notes |
-|---|---|---|
-| id | UUID | Primary key |
-| name | VARCHAR | Device name or label |
-| external_id | VARCHAR | Optional external device identifier |
-| description | TEXT | Optional description |
-| is_active | BOOLEAN | Enables or disables tracking |
-| created_at | TIMESTAMP | Record creation time |
-| updated_at | TIMESTAMP | Last update time |
+| Field       | Type      | Notes                               |
+| ----------- | --------- | ----------------------------------- |
+| id          | UUID      | Primary key                         |
+| name        | VARCHAR   | Device name or label                |
+| external_id | VARCHAR   | Optional external device identifier |
+| description | TEXT      | Optional description                |
+| is_active   | BOOLEAN   | Enables or disables tracking        |
+| created_at  | TIMESTAMP | Record creation time                |
+| updated_at  | TIMESTAMP | Last update time                    |
 
 ### Tracked Device Notes
 
@@ -97,16 +97,16 @@ A tracked device represents anything that submits location data, such as a mobil
 
 Stores submitted location records.
 
-| Field | Type | Notes |
-|---|---|---|
-| id | UUID | Primary key |
-| device_id | UUID | Foreign key to `tracked_devices.id` |
-| latitude | DECIMAL | Submitted latitude |
-| longitude | DECIMAL | Submitted longitude |
-| location | GEOGRAPHY(Point) | PostGIS point representation |
-| accuracy_meters | INTEGER | Optional accuracy value |
-| recorded_at | TIMESTAMP | Time the location was recorded |
-| received_at | TIMESTAMP | Time the API received the event |
+| Field           | Type             | Notes                                |
+| --------------- | ---------------- | ------------------------------------ |
+| id              | UUID             | Primary key                          |
+| device_id       | UUID             | Foreign key to `tracked_devices.id`  |
+| latitude        | DECIMAL          | Submitted latitude                   |
+| longitude       | DECIMAL          | Submitted longitude                  |
+| location        | GEOGRAPHY(Point) | PostGIS point representation         |
+| accuracy_meters | INTEGER          | Optional accuracy value              |
+| recorded_at     | TIMESTAMP        | Time the location was recorded       |
+| received_at     | TIMESTAMP        | Time the API received the event      |
 
 ### Location Event Notes
 
@@ -120,16 +120,16 @@ Latitude and longitude are kept separately for readability and API response form
 
 Stores geofence enter/exit alert history.
 
-| Field | Type | Notes |
-|---|---|---|
-| id | UUID | Primary key |
-| device_id | UUID | Foreign key to `tracked_devices.id` |
-| geofence_id | UUID | Foreign key to `geofences.id` |
-| location_event_id | UUID | Foreign key to `location_events.id` |
-| alert_type | VARCHAR | Example: `enter`, `exit` |
-| message | TEXT | Human-readable alert message |
-| severity | VARCHAR | Example: `low`, `medium`, `high` |
-| created_at | TIMESTAMP | Alert creation time |
+| Field             | Type      | Notes                                |
+| ----------------- | --------- | ------------------------------------ |
+| id                | UUID      | Primary key                          |
+| device_id         | UUID      | Foreign key to `tracked_devices.id`  |
+| geofence_id       | UUID      | Foreign key to `geofences.id`        |
+| location_event_id | UUID      | Foreign key to `location_events.id`  |
+| alert_type        | VARCHAR   | Example: `enter`, `exit`             |
+| message           | TEXT      | Human-readable alert message         |
+| severity          | VARCHAR   | Example: `low`, `medium`, `high`     |
+| created_at        | TIMESTAMP | Alert creation time                  |
 
 ### Alert Event Notes
 
@@ -141,12 +141,12 @@ This table supports future filtering by device, geofence, alert type, severity, 
 
 ## Relationships
 
-| Relationship | Description |
-|---|---|
-| `tracked_devices` → `location_events` | One tracked device can create many location events |
-| `tracked_devices` → `alert_events` | One tracked device can create many alert events |
-| `geofences` → `alert_events` | One geofence can be associated with many alert events |
-| `location_events` → `alert_events` | One location event can trigger one or more alert events |
+| Relationship                         | Description                                             |
+| ------------------------------------ | ------------------------------------------------------- |
+| `tracked_devices` → `location_events` | One tracked device can create many location events      |
+| `tracked_devices` → `alert_events`    | One tracked device can create many alert events         |
+| `geofences` → `alert_events`          | One geofence can be associated with many alert events   |
+| `location_events` → `alert_events`    | One location event can trigger one or more alert events |
 
 ---
 
