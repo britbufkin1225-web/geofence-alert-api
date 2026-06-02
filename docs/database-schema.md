@@ -65,7 +65,7 @@ Stores geofence regions and spatial boundary data.
 | created_at | TIMESTAMP | Record creation time |
 | updated_at | TIMESTAMP | Last update time |
 
-### Notes
+### Geofence Notes
 
 Circular geofences can use latitude, longitude, and radius values.
 
@@ -87,7 +87,7 @@ Stores device or location source information.
 | created_at | TIMESTAMP | Record creation time |
 | updated_at | TIMESTAMP | Last update time |
 
-### Notes
+### Tracked Device Notes
 
 A tracked device represents anything that submits location data, such as a mobile device, asset tracker, delivery vehicle, or simulated location source.
 
@@ -108,7 +108,7 @@ Stores submitted location records.
 | recorded_at | TIMESTAMP | Time the location was recorded |
 | received_at | TIMESTAMP | Time the API received the event |
 
-### Notes
+### Location Event Notes
 
 The `location` field can be used for spatial queries with PostGIS.
 
@@ -131,7 +131,7 @@ Stores geofence enter/exit alert history.
 | severity | VARCHAR | Example: `low`, `medium`, `high` |
 | created_at | TIMESTAMP | Alert creation time |
 
-### Notes
+### Alert Event Notes
 
 Alert events allow the API to keep a history of geofence activity.
 
