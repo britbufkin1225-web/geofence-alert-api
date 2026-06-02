@@ -137,7 +137,7 @@ Stores alert records generated when a tracked device enters, exits, or violates 
 
 ### Alert Event Notes
 
-Alert events are created when a submitted location event violates or crosses a geofence rule. For the MVP, geofence checks use a center latitude, center longitude, and radius in meters. Future versions may support polygon-based geofences and real-time notification delivery.
+Alert events are created when a submitted location event enters, exits, or violates a geofence rule. For the MVP, geofence checks use a center latitude, center longitude, and radius in meters. Future versions may support polygon-based geofences, webhook notifications, and real-time alert delivery.
 
 ---
 
