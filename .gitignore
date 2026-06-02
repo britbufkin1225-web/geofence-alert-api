@@ -78,10 +78,14 @@ web_modules/
 .next
 out
 
-# Nuxt.js build / generate output
+# Next.js build / generate output
 .nuxt
 dist
 .output
+
+# NestJS / local temp
+tmp/
+temp/
 
 # Gatsby files
 .cache/
@@ -151,6 +155,16 @@ prisma/*.db-journal
 docker-data/
 postgres-data/
 pgdata/
+
+# Local database files
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Temporary files
+tmp/
+temp/
 
 # OS files
 .DS_Store
