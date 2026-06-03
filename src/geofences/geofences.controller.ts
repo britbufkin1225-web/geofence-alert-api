@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 
 import { CreateGeofenceDto } from './dto/create-geofence.dto';
-import { QueryGeofenceDto } from './dto/query-geofence.dto';
+import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateGeofenceDto } from './dto/update-geofence.dto';
 import { GeofencesService } from './geofences.service';
 
@@ -24,8 +24,8 @@ export class GeofencesController {
   }
 
   @Get()
-  findAll(@Query() query: QueryGeofenceDto) {
-    return this.geofencesService.findAll(query);
+  findAll(@Query() paginationQuery: PaginationQueryDto) {
+    return this.geofencesService.findAll(paginationQuery);
   }
 
   @Get(':id')

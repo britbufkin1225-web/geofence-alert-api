@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGeofenceDto } from './dto/create-geofence.dto';
-import { QueryGeofenceDto } from './dto/query-geofence.dto';
+import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateGeofenceDto } from './dto/update-geofence.dto';
 
 @Injectable()
@@ -15,30 +15,35 @@ export class GeofencesService {
     });
   }
 
-  async findAll(query: QueryGeofenceDto) {
-    const where: {
-      name?: {
-        contains: string;
-      };
-      isActive?: boolean;
-    } = {};
+  async findAll(paginationQuery: PaginationQueryDto) {
+    const page = paginationQuery.page ?? 1;
+    const limit = paginationQuery.limit ?? 10;
+    const skip = (page - 1) * limit;
 
-    if (query.name) {
-      where.name = {
-        contains: query.name,
-      };
-    }
+    const [geofences, total] = await this.prisma.$transaction([
+      this.prisma.geofence.findMany({
+        skip,
+        take: limit,
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      this.prisma.geofence.count(),
+    ]);
 
-    if (query.active !== undefined) {
-      where.isActive = query.active === 'true';
-    }
+    const totalPages = Math.ceil(total / limit);
 
-    return this.prisma.geofence.findMany({
-      where,
-      orderBy: {
-        createdAt: 'desc',
+    return {
+      data: geofences,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
       },
-    });
+    };
   }
 
   async findOne(id: string) {
