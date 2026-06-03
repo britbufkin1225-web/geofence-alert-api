@@ -1,12 +1,29 @@
 import { Injectable } from '@nestjs/common';
 
+import { CreateGeofenceDto } from './dto/create-geofence.dto';
+
 @Injectable()
 export class GeofencesService {
-  getModuleStatus() {
+  create(createGeofenceDto: CreateGeofenceDto) {
     return {
-      module: 'geofences',
-      status: 'active',
-      message: 'Geofences domain module is connected.',
+      message: 'Geofence create endpoint reached',
+      data: createGeofenceDto,
+    };
+  }
+
+  findAll() {
+    return {
+      message: 'Geofence list endpoint reached',
+      data: [],
+    };
+  }
+
+  findOne(id: string) {
+    return {
+      message: 'Geofence detail endpoint reached',
+      data: {
+        id,
+      },
     };
   }
 }
