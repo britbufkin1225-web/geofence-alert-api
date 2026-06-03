@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
-import { GeofencesService } from './geofences.service';
+
+import { PrismaService } from '../prisma/prisma.service';
+
 import { GeofencesController } from './geofences.controller';
+import { GeofencesService } from './geofences.service';
 
 @Module({
-  providers: [GeofencesService],
   controllers: [GeofencesController],
+  providers: [GeofencesService, PrismaService],
 })
 export class GeofencesModule {}
