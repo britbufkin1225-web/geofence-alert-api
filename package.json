@@ -24,7 +24,9 @@
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@prisma/adapter-better-sqlite3": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "better-sqlite3": "^12.10.0",
     "joi": "^18.2.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
