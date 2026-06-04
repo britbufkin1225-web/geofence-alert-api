@@ -112,6 +112,7 @@ Detailed schema documentation is available in [Database Schema](docs/database-sc
 The schema documentation explains planned tables, relationships, foreign keys, example data flow, backend value, and future database improvements.
 
 ## Project Management
+Session history is tracked in [Session Log](docs/session-log.md).
 
 Development for the GeoFence Alert API is tracked using GitHub Projects.
 
