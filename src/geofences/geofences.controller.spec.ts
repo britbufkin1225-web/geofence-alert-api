@@ -1,8 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-argument */
-
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { CreateGeofenceDto } from './dto/create-geofence.dto';
@@ -77,6 +73,29 @@ describe('GeofencesController', () => {
       );
       expect(mockGeofencesService.create).toHaveBeenCalledTimes(1);
     });
+
+    it('should throw an error when create fails', async () => {
+      const createGeofenceDto: CreateGeofenceDto = {
+        name: 'Test Geofence',
+        latitude: 30.2672,
+        longitude: -97.7431,
+        radiusMeters: 100,
+        isActive: true,
+      };
+
+      mockGeofencesService.create.mockRejectedValue(
+        new Error('Failed to create geofence'),
+      );
+
+      await expect(controller.create(createGeofenceDto)).rejects.toThrow(
+        'Failed to create geofence',
+      );
+
+      expect(mockGeofencesService.create).toHaveBeenCalledWith(
+        createGeofenceDto,
+      );
+      expect(mockGeofencesService.create).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('findAll', () => {
@@ -106,6 +125,24 @@ describe('GeofencesController', () => {
     });
   });
 
+  it('should throw an error when findAll fails', async () => {
+    const query: QueryGeofencesDto = {
+      page: 1,
+      limit: 10,
+      active: true,
+    };
+
+    mockGeofencesService.findAll.mockRejectedValue(
+      new Error('Failed to fetch geofences'),
+    );
+
+    await expect(controller.findAll(query)).rejects.toThrow(
+      'Failed to fetch geofences',
+    );
+
+    expect(mockGeofencesService.findAll).toHaveBeenCalledWith(query);
+    expect(mockGeofencesService.findAll).toHaveBeenCalledTimes(1);
+  });
   describe('findOne', () => {
     it('should return one geofence by id', async () => {
       mockGeofencesService.findOne.mockResolvedValue(mockGeofence);
@@ -117,6 +154,21 @@ describe('GeofencesController', () => {
       expect(mockGeofencesService.findOne).toHaveBeenCalledWith(
         'test-geofence-id',
       );
+      expect(mockGeofencesService.findOne).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw NotFoundException when findOne does not find a geofence', async () => {
+      const geofenceId = 'missing-geofence-id';
+
+      mockGeofencesService.findOne.mockRejectedValue(
+        new NotFoundException(`Geofence with id ${geofenceId} not found`),
+      );
+
+      await expect(controller.findOne(geofenceId)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(mockGeofencesService.findOne).toHaveBeenCalledWith(geofenceId);
       expect(mockGeofencesService.findOne).toHaveBeenCalledTimes(1);
     });
   });
@@ -145,6 +197,51 @@ describe('GeofencesController', () => {
       );
       expect(mockGeofencesService.update).toHaveBeenCalledTimes(1);
     });
+
+    it('should throw an error when update fails', async () => {
+      const geofenceId = 'test-geofence-id';
+
+      const updateGeofenceDto: UpdateGeofenceDto = {
+        name: 'Updated Test Geofence',
+        isActive: false,
+      };
+
+      mockGeofencesService.update.mockRejectedValue(
+        new Error('Failed to update geofence'),
+      );
+
+      await expect(
+        controller.update(geofenceId, updateGeofenceDto),
+      ).rejects.toThrow('Failed to update geofence');
+
+      expect(mockGeofencesService.update).toHaveBeenCalledWith(
+        geofenceId,
+        updateGeofenceDto,
+      );
+      expect(mockGeofencesService.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw NotFoundException when update does not find a geofence', async () => {
+      const geofenceId = 'missing-geofence-id';
+
+      const updateGeofenceDto: UpdateGeofenceDto = {
+        name: 'Updated Test Geofence',
+      };
+
+      mockGeofencesService.update.mockRejectedValue(
+        new NotFoundException(`Geofence with id ${geofenceId} not found`),
+      );
+
+      await expect(
+        controller.update(geofenceId, updateGeofenceDto),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockGeofencesService.update).toHaveBeenCalledWith(
+        geofenceId,
+        updateGeofenceDto,
+      );
+      expect(mockGeofencesService.update).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('remove', () => {
@@ -160,6 +257,21 @@ describe('GeofencesController', () => {
       );
       expect(mockGeofencesService.remove).toHaveBeenCalledTimes(1);
     });
+
+    it('should throw NotFoundException when remove does not find a geofence', async () => {
+      const geofenceId = 'missing-geofence-id';
+
+      mockGeofencesService.remove.mockRejectedValue(
+        new NotFoundException(`Geofence with id ${geofenceId} not found`),
+      );
+
+      await expect(controller.remove(geofenceId)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(mockGeofencesService.remove).toHaveBeenCalledWith(geofenceId);
+      expect(mockGeofencesService.remove).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getSummary', () => {
@@ -173,6 +285,18 @@ describe('GeofencesController', () => {
       mockGeofencesService.getSummary.mockResolvedValue(summary);
 
       await expect(controller.getSummary()).resolves.toEqual(summary);
+
+      expect(mockGeofencesService.getSummary).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw an error when getSummary fails', async () => {
+      mockGeofencesService.getSummary.mockRejectedValue(
+        new Error('Failed to fetch geofence summary'),
+      );
+
+      await expect(controller.getSummary()).rejects.toThrow(
+        'Failed to fetch geofence summary',
+      );
 
       expect(mockGeofencesService.getSummary).toHaveBeenCalledTimes(1);
     });
