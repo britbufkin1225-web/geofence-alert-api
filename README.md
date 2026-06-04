@@ -16,15 +16,19 @@ This project demonstrates how a backend system can organize geofence data, recei
 
 ## Core Features
 
-Planned core features include:
+Current and planned core features include:
 
 - REST API for geofence management
 - Health and status endpoints
 - Environment-based configuration
-- Database-backed geofence and alert records
-- Location event tracking
-- Alert history storage
-- GIS-aware backend logic
+- Database-backed geofence records
+- DTO-based request validation
+- Query-based pagination
+- Query-based status filtering
+- Geofence summary reporting
+- Unit-tested geofence summary logic
+- Planned location event tracking
+- Planned alert workflow support
 - Structured project management using GitHub Projects
 
 ## Tech Stack
@@ -61,18 +65,34 @@ Architecture diagrams and screenshots will be added as the project develops.
 
 ## API Endpoints
 
-Planned initial endpoints:
+Current implemented geofence endpoints:
 
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/health` | Check API health |
-| GET | `/api/v1/status` | Return API status and metadata |
-| GET | `/api/v1/geofences` | List geofences |
-| POST | `/api/v1/geofences` | Create a geofence |
-| GET | `/api/v1/alerts` | List alert events |
-| POST | `/api/v1/location-events` | Submit a location event |
+| Method | Endpoint | Purpose | Status |
+| --- | --- | --- | --- |
+| GET | `/api/v1/health` | Check API health | Complete |
+| POST | `/geofences` | Create a geofence | Complete |
+| GET | `/geofences` | List geofences with pagination and filtering | Complete |
+| GET | `/geofences/summary` | Return aggregate geofence summary counts | Complete |
+| GET | `/geofences/:id` | Retrieve a geofence by ID | Complete |
+| PATCH | `/geofences/:id` | Update a geofence by ID | Complete |
+| DELETE | `/geofences/:id` | Delete a geofence by ID | Complete |
 
-Endpoint details will be updated as implementation progresses.
+Planned future endpoints:
+
+| Method | Endpoint | Purpose | Status |
+| --- | --- | --- | --- |
+| GET | `/api/v1/alerts` | List alert events | Planned |
+| POST | `/api/v1/location-events` | Submit a location event | Planned |
+
+### Geofence Query Parameters
+
+The `GET /geofences` endpoint supports pagination and status filtering.
+
+| Query Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | number | No | Page number for paginated results. Defaults to `1`. |
+| `limit` | number | No | Number of records returned per page. |
+| `status` | string | No | Filters geofences by status. |
 
 ## Database Design
 
@@ -140,30 +160,46 @@ Real `.env` files should not be committed.
 
 ## Testing
 
-Planned testing and verification includes:
+This project uses Jest for backend unit testing.
 
-- Health endpoint testing
-- Status endpoint testing
-- Environment configuration checks
-- API response validation
-- Database connection testing
-- Geofence logic testing
-- Alert workflow testing
+Current test coverage includes:
 
-Testing notes will be documented as the project progresses.
+- Geofence summary service behavior
+- Aggregate summary count validation
+- Empty-state summary behavior
+- Mixed-status summary behavior
+
+Current verified test state:
+
+```text
+Test Suites: 1 passed
+Tests: 3 passed
+```
+
+Additional planned testing includes:
+
+- Geofence CRUD behavior
+- Pagination behavior
+- Status filtering behavior
+- Controller route behavior
+- Not-found error handling
+- Alert workflow behavior
 
 ## Roadmap
 
 | Phase | Focus | Status |
 | --- | --- | --- |
-| Phase 1 | Project foundation | In Progress |
-| Phase 2 | Core API endpoints | Planned |
-| Phase 3 | Database schema | Planned |
-| Phase 4 | Geofencing logic | Planned |
-| Phase 5 | Alert workflow | Planned |
-| Phase 6 | Testing | Planned |
-| Phase 7 | Documentation | Planned |
-| Phase 8 | Portfolio polish | Planned |
+| Phase 1 | Project foundation | Complete |
+| Phase 2 | Core API endpoints | Complete |
+| Phase 3 | Database schema | Complete |
+| Phase 4 | Geofence CRUD logic | Complete |
+| Phase 5 | DTO validation | Complete |
+| Phase 6 | Pagination and filtering | Complete |
+| Phase 7 | Geofence summary endpoint | Complete |
+| Phase 8 | Unit testing foundation | In Progress |
+| Phase 9 | Alert workflow | Planned |
+| Phase 10 | Documentation polish | In Progress |
+| Phase 11 | Portfolio polish | Planned |
 
 ## Portfolio Value
 
