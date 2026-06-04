@@ -1,5 +1,5 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-
 import { PrismaService } from '../prisma/prisma.service';
 import { GeofencesService } from './geofences.service';
 
@@ -301,6 +301,180 @@ describe('GeofencesService', () => {
       expect(mockPrismaService.geofence.findMany).toHaveBeenCalledTimes(1);
       expect(mockPrismaService.geofence.count).toHaveBeenCalledTimes(1);
     });
+  });
+
+  describe('findAll', () => {
+    // your 4 findAll tests
+  });
+
+  describe('findOne', () => {
+    it('should return a geofence when it exists', async () => {
+      const geofence = {
+        id: 'geofence-1',
+        name: 'Test Zone',
+        description: 'Test geofence area',
+        latitude: 30.2672,
+        longitude: -97.7431,
+        radiusMeters: 100,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.geofence.findUnique.mockResolvedValue(geofence);
+
+      const result = await service.findOne('geofence-1');
+
+      expect(result).toEqual(geofence);
+
+      expect(mockPrismaService.geofence.findUnique).toHaveBeenCalledWith({
+        where: {
+          id: 'geofence-1',
+        },
+      });
+    });
+  });
+
+  it('should throw NotFoundException when geofence does not exist', async () => {
+    mockPrismaService.geofence.findUnique.mockResolvedValue(null);
+
+    await expect(service.findOne('missing-geofence')).rejects.toThrow(
+      NotFoundException,
+    );
+
+    expect(mockPrismaService.geofence.findUnique).toHaveBeenCalledWith({
+      where: {
+        id: 'missing-geofence',
+      },
+    });
+  });
+
+  describe('findOne', () => {
+    // existing tests
+  });
+
+  describe('update', () => {
+    // new tests go here
+  });
+
+  describe('getSummary', () => {
+    // existing tests
+  });
+
+  describe('update', () => {
+    it('should update a geofence when it exists', async () => {
+      const existingGeofence = {
+        id: 'geofence-1',
+        name: 'Old Zone',
+        description: 'Old description',
+        latitude: 30.2672,
+        longitude: -97.7431,
+        radiusMeters: 100,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      const updateGeofenceDto = {
+        name: 'Updated Zone',
+        radiusMeters: 250,
+      };
+
+      const updatedGeofence = {
+        ...existingGeofence,
+        ...updateGeofenceDto,
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.geofence.findUnique.mockResolvedValue(existingGeofence);
+      mockPrismaService.geofence.update.mockResolvedValue(updatedGeofence);
+
+      const result = await service.update('geofence-1', updateGeofenceDto);
+
+      expect(result).toEqual(updatedGeofence);
+
+      expect(mockPrismaService.geofence.findUnique).toHaveBeenCalledWith({
+        where: {
+          id: 'geofence-1',
+        },
+      });
+
+      expect(mockPrismaService.geofence.update).toHaveBeenCalledWith({
+        where: {
+          id: 'geofence-1',
+        },
+        data: updateGeofenceDto,
+      });
+    });
+  });
+
+  it('should throw NotFoundException when updating a missing geofence', async () => {
+    mockPrismaService.geofence.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.update('missing-geofence', {
+        name: 'Updated Zone',
+      }),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(mockPrismaService.geofence.findUnique).toHaveBeenCalledWith({
+      where: {
+        id: 'missing-geofence',
+      },
+    });
+
+    expect(mockPrismaService.geofence.update).not.toHaveBeenCalled();
+  });
+
+  describe('remove', () => {
+    it('should delete a geofence when it exists', async () => {
+      const existingGeofence = {
+        id: 'geofence-1',
+        name: 'Delete Zone',
+        description: 'Geofence to delete',
+        latitude: 30.2672,
+        longitude: -97.7431,
+        radiusMeters: 100,
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.geofence.findUnique.mockResolvedValue(existingGeofence);
+      mockPrismaService.geofence.delete.mockResolvedValue(existingGeofence);
+
+      const result = await service.remove('geofence-1');
+
+      expect(result).toEqual(existingGeofence);
+
+      expect(mockPrismaService.geofence.findUnique).toHaveBeenCalledWith({
+        where: {
+          id: 'geofence-1',
+        },
+      });
+
+      expect(mockPrismaService.geofence.delete).toHaveBeenCalledWith({
+        where: {
+          id: 'geofence-1',
+        },
+      });
+    });
+  });
+
+  it('should throw NotFoundException when deleting a missing geofence', async () => {
+    mockPrismaService.geofence.findUnique.mockResolvedValue(null);
+
+    await expect(service.remove('missing-geofence')).rejects.toThrow(
+      NotFoundException,
+    );
+
+    expect(mockPrismaService.geofence.findUnique).toHaveBeenCalledWith({
+      where: {
+        id: 'missing-geofence',
+      },
+    });
+
+    expect(mockPrismaService.geofence.delete).not.toHaveBeenCalled();
   });
 
   describe('getSummary', () => {
