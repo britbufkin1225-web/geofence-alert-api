@@ -16,6 +16,7 @@ describe('GeofencesService', () => {
       count: jest.fn(),
       aggregate: jest.fn(),
     },
+    $transaction: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -36,6 +37,270 @@ describe('GeofencesService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('create', () => {
+    it('should create a geofence', async () => {
+      const createGeofenceDto = {
+        name: 'Test Zone',
+        description: 'Test geofence area',
+        latitude: 30.2672,
+        longitude: -97.7431,
+        radiusMeters: 100,
+        isActive: true,
+      };
+
+      const createdGeofence = {
+        id: 'geofence-1',
+        ...createGeofenceDto,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockPrismaService.geofence.create.mockResolvedValue(createdGeofence);
+
+      await expect(service.create(createGeofenceDto)).resolves.toEqual(
+        createdGeofence,
+      );
+
+      expect(mockPrismaService.geofence.create).toHaveBeenCalledWith({
+        data: createGeofenceDto,
+      });
+    });
+  });
+
+  describe('findAll', () => {
+    it('should return paginated geofences with default query values', async () => {
+      const geofences = [
+        {
+          id: 'geofence-1',
+          name: 'Test Zone 1',
+          description: 'First test geofence',
+          latitude: 30.2672,
+          longitude: -97.7431,
+          radiusMeters: 100,
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 'geofence-2',
+          name: 'Test Zone 2',
+          description: 'Second test geofence',
+          latitude: 30.2673,
+          longitude: -97.7432,
+          radiusMeters: 200,
+          isActive: false,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
+
+      mockPrismaService.geofence.findMany.mockResolvedValue(geofences);
+      mockPrismaService.geofence.count.mockResolvedValue(2);
+      mockPrismaService.$transaction.mockResolvedValue([geofences, 2]);
+
+      const result = await service.findAll({});
+
+      expect(result).toEqual({
+        data: geofences,
+        meta: {
+          total: 2,
+          page: 1,
+          limit: 10,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+          filters: {
+            active: null,
+            search: null,
+          },
+          sort: {
+            sortBy: 'createdAt',
+            sortOrder: 'desc',
+          },
+        },
+      });
+
+      expect(mockPrismaService.geofence.findMany).toHaveBeenCalledWith({
+        where: {},
+        skip: 0,
+        take: 10,
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      expect(mockPrismaService.geofence.count).toHaveBeenCalledWith({
+        where: {},
+      });
+    });
+
+    it('should filter geofences by active status', async () => {
+      const geofences = [
+        {
+          id: 'geofence-1',
+          name: 'Active Zone',
+          description: 'Active test geofence',
+          latitude: 30.2672,
+          longitude: -97.7431,
+          radiusMeters: 100,
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
+
+      mockPrismaService.geofence.findMany.mockResolvedValue(geofences);
+      mockPrismaService.geofence.count.mockResolvedValue(1);
+      mockPrismaService.$transaction.mockResolvedValue([geofences, 1]);
+
+      const result = await service.findAll({
+        active: true,
+      });
+
+      expect(result).toEqual({
+        data: geofences,
+        meta: {
+          total: 1,
+          page: 1,
+          limit: 10,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+          filters: {
+            active: true,
+            search: null,
+          },
+          sort: {
+            sortBy: 'createdAt',
+            sortOrder: 'desc',
+          },
+        },
+      });
+
+      expect(mockPrismaService.geofence.findMany).toHaveBeenCalledWith({
+        where: {
+          isActive: true,
+        },
+        skip: 0,
+        take: 10,
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      expect(mockPrismaService.geofence.count).toHaveBeenCalledWith({
+        where: {
+          isActive: true,
+        },
+      });
+    });
+
+    it('should apply pagination values', async () => {
+      const geofences = [
+        {
+          id: 'geofence-3',
+          name: 'Paginated Zone',
+          description: 'Paginated test geofence',
+          latitude: 30.2674,
+          longitude: -97.7433,
+          radiusMeters: 300,
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
+
+      mockPrismaService.geofence.findMany.mockResolvedValue(geofences);
+      mockPrismaService.geofence.count.mockResolvedValue(11);
+      mockPrismaService.$transaction.mockResolvedValue([geofences, 11]);
+
+      const result = await service.findAll({
+        page: 2,
+        limit: 5,
+      });
+
+      expect(result).toEqual({
+        data: geofences,
+        meta: {
+          total: 11,
+          page: 2,
+          limit: 5,
+          totalPages: 3,
+          hasNextPage: true,
+          hasPreviousPage: true,
+          filters: {
+            active: null,
+            search: null,
+          },
+          sort: {
+            sortBy: 'createdAt',
+            sortOrder: 'desc',
+          },
+        },
+      });
+
+      expect(mockPrismaService.geofence.findMany).toHaveBeenCalledWith({
+        where: {},
+        skip: 5,
+        take: 5,
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      expect(mockPrismaService.geofence.count).toHaveBeenCalledWith({
+        where: {},
+      });
+    });
+
+    it('should filter geofences by search term', async () => {
+      const geofences = [
+        {
+          id: 'geofence-4',
+          name: 'Warehouse Zone',
+          description: 'Searchable geofence',
+          latitude: 30.2675,
+          longitude: -97.7434,
+          radiusMeters: 400,
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
+
+      mockPrismaService.geofence.findMany.mockResolvedValue(geofences);
+      mockPrismaService.geofence.count.mockResolvedValue(1);
+      mockPrismaService.$transaction.mockResolvedValue([geofences, 1]);
+
+      const result = await service.findAll({
+        search: 'Warehouse',
+      });
+
+      expect(result).toEqual({
+        data: geofences,
+        meta: {
+          total: 1,
+          page: 1,
+          limit: 10,
+          totalPages: 1,
+          hasNextPage: false,
+          hasPreviousPage: false,
+          filters: {
+            active: null,
+            search: 'Warehouse',
+          },
+          sort: {
+            sortBy: 'createdAt',
+            sortOrder: 'desc',
+          },
+        },
+      });
+
+      expect(mockPrismaService.geofence.findMany).toHaveBeenCalledTimes(1);
+      expect(mockPrismaService.geofence.count).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getSummary', () => {
