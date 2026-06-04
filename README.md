@@ -65,6 +65,8 @@ Architecture diagrams and screenshots will be added as the project develops.
 
 ## API Endpoints
 
+Detailed endpoint documentation is available in [API Documentation](docs/api.md).
+
 Current implemented geofence endpoints:
 
 | Method | Endpoint | Purpose | Status |
