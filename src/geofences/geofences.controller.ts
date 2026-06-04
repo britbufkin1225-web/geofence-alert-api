@@ -28,6 +28,11 @@ export class GeofencesController {
     return this.geofencesService.findAll(query);
   }
 
+  @Get('summary')
+  getSummary() {
+    return this.geofencesService.getSummary();
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.geofencesService.findOne(id);

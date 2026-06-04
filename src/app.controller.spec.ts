@@ -1,24 +1,34 @@
-import { describe, beforeEach, expect, it } from '@jest/globals';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { PrismaService } from './prisma/prisma.service';
 
 describe('AppController', () => {
   let appController: AppController;
 
+  const mockPrismaService = {};
+
   beforeEach(async () => {
-    const moduleRef: TestingModule = await Test.createTestingModule({
+    const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      providers: [
+        AppService,
+        {
+          provide: PrismaService,
+          useValue: mockPrismaService,
+        },
+      ],
     }).compile();
 
-    appController = moduleRef.get(AppController);
+    appController = app.get<AppController>(AppController);
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return "GeoFence Alert API is connected to Prisma"', () => {
+      expect(appController.getHello()).toBe(
+        'GeoFence Alert API is connected to Prisma',
+      );
     });
   });
 });

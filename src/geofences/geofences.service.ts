@@ -87,6 +87,47 @@ export class GeofencesService {
     return geofence;
   }
 
+  async getSummary() {
+    const [total, active, inactive, radiusStats] = await Promise.all([
+      this.prisma.geofence.count(),
+
+      this.prisma.geofence.count({
+        where: {
+          isActive: true,
+        },
+      }),
+
+      this.prisma.geofence.count({
+        where: {
+          isActive: false,
+        },
+      }),
+
+      this.prisma.geofence.aggregate({
+        _min: {
+          radiusMeters: true,
+        },
+        _max: {
+          radiusMeters: true,
+        },
+        _avg: {
+          radiusMeters: true,
+        },
+      }),
+    ]);
+
+    return {
+      total,
+      active,
+      inactive,
+      radius: {
+        min: radiusStats._min.radiusMeters ?? 0,
+        max: radiusStats._max.radiusMeters ?? 0,
+        average: radiusStats._avg.radiusMeters ?? 0,
+      },
+    };
+  }
+
   async update(id: string, updateGeofenceDto: UpdateGeofenceDto) {
     await this.findOne(id);
 
