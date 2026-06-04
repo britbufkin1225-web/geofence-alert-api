@@ -16,6 +16,8 @@ describe('GeofencesController', () => {
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [GeofencesController],
       providers: [
@@ -31,5 +33,27 @@ describe('GeofencesController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  describe('getSummary', () => {
+    it('should return geofence summary data', async () => {
+      const summary = {
+        total: 3,
+        active: 2,
+        inactive: 1,
+        radius: {
+          min: 100,
+          max: 500,
+          average: 300,
+        },
+      };
+
+      mockGeofencesService.getSummary.mockResolvedValue(summary);
+
+      const result = await controller.getSummary();
+
+      expect(result).toEqual(summary);
+      expect(mockGeofencesService.getSummary).toHaveBeenCalledTimes(1);
+    });
   });
 });
