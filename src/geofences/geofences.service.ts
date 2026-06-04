@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateGeofenceDto } from './dto/create-geofence.dto';
-import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { QueryGeofencesDto } from './dto/query-geofences.dto';
 import { UpdateGeofenceDto } from './dto/update-geofence.dto';
 
 @Injectable()
@@ -15,33 +16,59 @@ export class GeofencesService {
     });
   }
 
-  async findAll(paginationQuery: PaginationQueryDto) {
-    const page = paginationQuery.page ?? 1;
-    const limit = paginationQuery.limit ?? 10;
+  async findAll(query: QueryGeofencesDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
     const skip = (page - 1) * limit;
+
+    const sortBy = query.sortBy ?? 'createdAt';
+    const sortOrder = query.sortOrder ?? 'desc';
+
+    const where: Prisma.GeofenceWhereInput = {};
+
+    if (query.active !== undefined) {
+      where.isActive = query.active;
+    }
+
+    if (query.search) {
+      where.name = {
+        contains: query.search,
+      };
+    }
+
+    const orderBy: Prisma.GeofenceOrderByWithRelationInput = {
+      [sortBy]: sortOrder,
+    };
 
     const [geofences, total] = await this.prisma.$transaction([
       this.prisma.geofence.findMany({
+        where,
         skip,
         take: limit,
-        orderBy: {
-          createdAt: 'desc',
-        },
+        orderBy,
       }),
-      this.prisma.geofence.count(),
+      this.prisma.geofence.count({
+        where,
+      }),
     ]);
-
-    const totalPages = Math.ceil(total / limit);
 
     return {
       data: geofences,
       meta: {
+        total,
         page,
         limit,
-        total,
-        totalPages,
-        hasNextPage: page < totalPages,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page * limit < total,
         hasPreviousPage: page > 1,
+        filters: {
+          active: query.active ?? null,
+          search: query.search ?? null,
+        },
+        sort: {
+          sortBy,
+          sortOrder,
+        },
       },
     };
   }
