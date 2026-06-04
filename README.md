@@ -161,6 +161,7 @@ Environment variables should be copied from:
 Real `.env` files should not be committed.
 
 ## Testing
+Detailed testing notes are available in [Testing Documentation](docs/testing.md).
 
 This project uses Jest for backend unit testing.
 
