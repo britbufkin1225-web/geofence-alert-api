@@ -1,5 +1,12 @@
 import { Controller, Get } from '@nestjs/common';
+
 import { AppService } from './app.service';
+
+type DatabaseStatusResponse = {
+  database: string;
+  provider: string;
+  status: string;
+};
 
 @Controller()
 export class AppController {
@@ -8,5 +15,10 @@ export class AppController {
   @Get()
   getHello(): string {
     return this.appService.getHello();
+  }
+
+  @Get('db/status')
+  getDatabaseStatus(): Promise<DatabaseStatusResponse> {
+    return this.appService.getDatabaseStatus();
   }
 }
