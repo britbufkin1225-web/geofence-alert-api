@@ -1,12 +1,47 @@
 # GeoFence Alert API
 
-Backend API for managing geofences, location events, and alert workflows using GIS-aware backend design.
+A backend API for managing geofence records, built with NestJS and Prisma.
+
+> **Implementation status:** This repository is an early-stage CRUD baseline.
+> It currently implements geofence create/read/update/delete with request
+> validation, pagination, filtering, and a summary endpoint, backed by
+> **SQLite** via Prisma. Location-event ingestion, spatial evaluation, alerting,
+> authentication, and PostgreSQL/PostGIS are **planned roadmap items and are not
+> implemented**. See [Currently Implemented vs Planned](#currently-implemented-vs-planned).
 
 ## Project Summary
 
-GeoFence Alert API is a backend-focused portfolio project that combines API development, geospatial logic, database design, and alert workflow management.
+GeoFence Alert API is a backend-focused portfolio project whose long-term vision
+combines API development, geospatial logic, database design, and alert workflow
+management.
 
-The project is designed to manage geofence regions, process location events, and prepare alert records when a tracked device enters or exits a defined area.
+The eventual goal is to manage geofence regions, process location events, and
+prepare alert records when a tracked device enters or exits a defined area. Today
+the codebase provides the geofence-management foundation for that vision.
+
+## Currently Implemented vs Planned
+
+**Currently implemented (verified in code):**
+
+- NestJS application with a `/api/v1` route prefix
+- Unversioned `/health` and `/status` operational endpoints
+- Geofence CRUD (create, list, get-by-id, update, delete) via Prisma + SQLite
+- DTO-based request validation with bounded, deterministic limits
+- Pagination and name/active filtering for the list endpoint
+- Geofence summary (counts and radius aggregates)
+- A consistent, non-leaky JSON error contract
+- Unit and HTTP-level regression tests (no external database required)
+
+**Planned but not yet implemented:**
+
+- Authentication and authorization
+- Users, tenants, or ownership isolation
+- PostgreSQL / PostGIS
+- Location-event ingestion and history
+- Spatial containment, enter/exit/dwell evaluation
+- Alert creation and dispatch
+- Production deployment readiness
+- Location-data retention / deletion controls
 
 ## Problem It Solves
 
@@ -16,28 +51,34 @@ This project demonstrates how a backend system can organize geofence data, recei
 
 ## Core Features
 
-Current and planned core features include:
+**Implemented:**
 
-- REST API for geofence management
-- Health and status endpoints
+- REST API for geofence management (`/api/v1/geofences`)
+- Health and status endpoints (`/health`, `/status`)
 - Environment-based configuration
-- Database-backed geofence records
-- DTO-based request validation
-- Query-based pagination
-- Query-based status filtering
+- SQLite-backed geofence records via Prisma
+- DTO-based request validation with bounded limits
+- Query-based pagination and filtering (active status, name search, sorting)
 - Geofence summary reporting
-- Unit-tested geofence summary logic
-- Planned location event tracking
-- Planned alert workflow support
-- Structured project management using GitHub Projects
+- Unit- and HTTP-tested geofence behavior
+- Stable, non-leaky JSON error contract
+
+**Planned:**
+
+- Location event tracking
+- Alert workflow support
+- Authentication and user-owned resources
+- PostgreSQL / PostGIS spatial features
 
 ## Tech Stack
 
 | Area | Tools |
 | --- | --- |
-| Backend | NestJS, TypeScript, Node.js |
-| Database | PostgreSQL, PostGIS |
-| API Testing | Postman or Thunder Client |
+| Backend | NestJS, TypeScript, Node.js (>=20) |
+| Database (current) | SQLite via Prisma (`@prisma/adapter-better-sqlite3`) |
+| Database (planned) | PostgreSQL, PostGIS |
+| Validation | class-validator, class-transformer |
+| Testing | Jest, Supertest |
 | Project Management | GitHub Projects, Issues, Labels |
 | Documentation | Markdown, GitHub README |
 | Version Control | Git, GitHub |
@@ -67,45 +108,94 @@ Architecture diagrams and screenshots will be added as the project develops.
 
 Detailed endpoint documentation is available in [API Documentation](docs/api.md).
 
-Current implemented geofence endpoints:
+Application API routes are served under the `/api/v1` prefix. The `/health` and
+`/status` operational endpoints are intentionally left unversioned at the root.
+
+Current implemented endpoints:
 
 | Method | Endpoint | Purpose | Status |
 | --- | --- | --- | --- |
-| GET | `/api/v1/health` | Check API health | Complete |
-| POST | `/geofences` | Create a geofence | Complete |
-| GET | `/geofences` | List geofences with pagination and filtering | Complete |
-| GET | `/geofences/summary` | Return aggregate geofence summary counts | Complete |
-| GET | `/geofences/:id` | Retrieve a geofence by ID | Complete |
-| PATCH | `/geofences/:id` | Update a geofence by ID | Complete |
-| DELETE | `/geofences/:id` | Delete a geofence by ID | Complete |
+| GET | `/health` | Liveness check (unversioned) | Complete |
+| GET | `/status` | Service metadata (unversioned) | Complete |
+| GET | `/api/v1` | Root greeting string | Complete |
+| GET | `/api/v1/db/status` | Database connectivity check | Complete |
+| POST | `/api/v1/geofences` | Create a geofence | Complete |
+| GET | `/api/v1/geofences` | List geofences with pagination and filtering | Complete |
+| GET | `/api/v1/geofences/summary` | Return aggregate geofence summary counts | Complete |
+| GET | `/api/v1/geofences/:id` | Retrieve a geofence by ID | Complete |
+| PATCH | `/api/v1/geofences/:id` | Update a geofence by ID | Complete |
+| DELETE | `/api/v1/geofences/:id` | Delete a geofence by ID | Complete |
 
-Planned future endpoints:
+Planned future endpoints (not implemented):
 
 | Method | Endpoint | Purpose | Status |
 | --- | --- | --- | --- |
-| GET | `/api/v1/alerts` | List alert events | Planned |
+| GET | `/api/v1/alert-events` | List alert events | Planned |
 | POST | `/api/v1/location-events` | Submit a location event | Planned |
 
 ### Geofence Query Parameters
 
-The `GET /geofences` endpoint supports pagination and status filtering.
+The `GET /api/v1/geofences` endpoint supports pagination, filtering, and sorting.
 
 | Query Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `page` | number | No | Page number for paginated results. Defaults to `1`. |
-| `limit` | number | No | Number of records returned per page. |
-| `status` | string | No | Filters geofences by status. |
+| `page` | integer | No | Page number. Default `1`, minimum `1`. |
+| `limit` | integer | No | Records per page. Default `10`, minimum `1`, maximum `100`. |
+| `active` | boolean | No | Filters by active status (`true` or `false`). |
+| `search` | string | No | Case-sensitive name substring filter (max 100 characters). |
+| `sortBy` | string | No | One of `name`, `createdAt`, `updatedAt`, `radiusMeters`, `isActive`. Default `createdAt`. |
+| `sortOrder` | string | No | `asc` or `desc`. Default `desc`. |
+
+### Validation Limits
+
+Request bodies are validated with the following bounds (unknown properties are
+rejected):
+
+| Field | Rule |
+| --- | --- |
+| `name` | Required string, trimmed, 1–120 characters, not blank |
+| `description` | Optional string, trimmed, max 1000 characters |
+| `latitude` | Number in `-90`…`90` (inclusive) |
+| `longitude` | Number in `-180`…`180` (inclusive) |
+| `radiusMeters` | Number in `1`…`5000` meters (inclusive) |
+| Route `:id` | Must be a valid cuid; malformed ids return `400` |
+
+Update requests reject empty bodies and bodies containing only unknown fields.
+
+### Error Contract
+
+All errors return a stable JSON shape and never leak stack traces, Prisma
+internals, SQL, or filesystem paths:
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": ["radiusMeters must not be greater than 5000"],
+  "path": "/api/v1/geofences",
+  "timestamp": "2026-08-05T00:00:00.000Z"
+}
+```
 
 ## Database Design
 
-Planned database entities:
+The current Prisma schema (SQLite) defines two models with string `cuid`
+primary keys:
+
+| Entity | Status | Purpose |
+| --- | --- | --- |
+| Geofence | Implemented | Named circular geofence areas (lat/long/radius, active flag) |
+| AlertEvent | Defined (schema only) | Alert records related to a geofence; no runtime logic yet |
+
+Planned future entities (not in the schema):
 
 | Entity | Purpose |
 | --- | --- |
-| Geofence | Stores named geofence areas and spatial boundaries |
-| Tracked Device | Stores device or location source details |
-| Location Event | Stores submitted latitude/longitude events |
-| Alert Event | Stores enter/exit alert history |
+| User | Account ownership and isolation |
+| Tracked Device | Device or location source details |
+| Location Event | Submitted latitude/longitude events |
+
+There is no `users` table and no ownership relationship in the current schema.
 
 Detailed schema documentation is available in [Database Schema](docs/database-schema.md).
 
@@ -144,50 +234,57 @@ Planned security practices include:
 
 ## Local Development
 
-Local setup instructions will be expanded as the backend is implemented.
-
-Planned setup flow:
+Setup flow:
 
 ```bash
 npm install
+cp .env.example .env
+npx prisma generate
+npx prisma migrate deploy
 npm run start:dev
 ```
 
-Environment variables should be copied from:
+The application uses a local SQLite database file (`DATABASE_URL="file:./dev.db"`
+by default). Real `.env` files should not be committed.
+
+Common scripts:
 
 ```bash
-.env.example
+npm run build      # compile
+npm test           # run the Jest test suite
+npm run lint       # non-mutating lint (CI/audit safe)
+npm run lint:fix   # lint with autofix
 ```
-
-Real `.env` files should not be committed.
 
 ## Testing
 Detailed testing notes are available in [Testing Documentation](docs/testing.md).
 
-This project uses Jest for backend unit testing.
+This project uses Jest for unit tests and Supertest for HTTP-level tests. The
+HTTP tests boot a real Nest application with a mocked Prisma layer, so **no
+database is required to run the suite**.
 
 Current test coverage includes:
 
-- Geofence summary service behavior
-- Aggregate summary count validation
-- Empty-state summary behavior
-- Mixed-status summary behavior
+- Geofence service CRUD and summary behavior
+- Controller route behavior and not-found handling
+- DTO validation boundaries (name, coordinates, radius, pagination, search)
+- Route-identifier (cuid) validation
+- `/api/v1` routing and unversioned `/health` and `/status`
+- Unknown-field rejection and the stable error contract
+- No internal error-detail leakage on failure paths
 
 Current verified test state:
 
 ```text
-Test Suites: 1 passed
-Tests: 3 passed
+Test Suites: 7 passed
+Tests: 73 passed
 ```
 
 Additional planned testing includes:
 
-- Geofence CRUD behavior
-- Pagination behavior
-- Status filtering behavior
-- Controller route behavior
-- Not-found error handling
 - Alert workflow behavior
+- Location-event processing
+- Real database integration tests
 
 ## Roadmap
 

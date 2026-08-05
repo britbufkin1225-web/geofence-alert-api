@@ -15,17 +15,21 @@ The project uses two main environment files during local development:
 
 ## Variables
 
-| Variable | Example Value | Required | Description |
+The **Consumed by code** column reflects what the current application actually
+reads. Variables marked "No" are documented for the planned roadmap but are not
+yet referenced anywhere in the codebase.
+
+| Variable | Example Value | Consumed by code | Description |
 | --- | --- | --- | --- |
-| `NODE_ENV` | `development` | Yes | Defines the current application environment. |
-| `PORT` | `3000` | Yes | The port where the API server runs locally. |
-| `DATABASE_URL` | `file:./dev.db` | Yes | Database connection string used by Prisma or the database layer. |
-| `API_PREFIX` | `api` | Yes | Base prefix for API routes. |
-| `API_VERSION` | `v1` | Yes | API version identifier. |
-| `API_KEY` | `dev-geofence-api-key` | Yes | Development API key used for protected routes. |
-| `DEFAULT_GEOFENCE_RADIUS_METERS` | `100` | Yes | Default radius used when creating or testing geofences. |
-| `MAX_GEOFENCE_RADIUS_METERS` | `5000` | Yes | Maximum allowed geofence radius in meters. |
-| `LOG_LEVEL` | `debug` | No | Controls how much logging detail the application outputs. |
+| `DATABASE_URL` | `file:./dev.db` | Yes | SQLite connection string used by the Prisma service. Falls back to `file:./dev.db` if unset. |
+| `PORT` | `3000` | Yes | Port the API listens on. Falls back to `3000` if unset. |
+| `NODE_ENV` | `development` | Yes | Reported by the `/status` endpoint. Defaults to `development`. |
+| `API_PREFIX` | `api` | Reported only | Echoed by the `/status` endpoint as metadata. The actual route prefix (`api/v1`) is currently hardcoded in `setupApp`, not derived from this variable. |
+| `API_VERSION` | `v1` | No | Documented for the roadmap; not read by code. |
+| `API_KEY` | `change-this-development-api-key` | No | Placeholder for future authentication; no protected routes exist yet. |
+| `DEFAULT_GEOFENCE_RADIUS_METERS` | `100` | No | Documented default; not read by code. |
+| `MAX_GEOFENCE_RADIUS_METERS` | `5000` | No | Documents the intended max radius. The `5000` limit is currently enforced as a constant in the DTO layer, not read from this variable. |
+| `LOG_LEVEL` | `debug` | No | Documented for the roadmap; not read by code. |
 
 ## Local Development Example
 

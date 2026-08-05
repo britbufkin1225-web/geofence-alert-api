@@ -1,10 +1,58 @@
 # Database Schema
 
-The GeoFence Alert API uses a relational database structure to store users, geofence zones, and alert events. The schema is designed to support backend API workflows involving location-based monitoring, event logging, and geofence-triggered alerts.
+> **Implementation status.** The **current** Prisma schema (SQLite) contains
+> only two models: `Geofence` and `AlertEvent`. Primary keys are string `cuid`
+> values, **not** UUIDs. There is **no `users` table**, no `user_id` foreign
+> key, and no ownership relationship. The `users` table, user ownership, and the
+> PostgreSQL/PostGIS design described later in this document are **planned future
+> work** and are documented here as a roadmap, not as current functionality.
 
-## Schema Overview
+## Current Schema (Implemented)
 
-The database is organized around three main entities:
+Source of truth: [`prisma/schema.prisma`](../prisma/schema.prisma), provider
+`sqlite`.
+
+### `Geofence` (implemented)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | String (`cuid`) | Primary key |
+| `name` | String | Required |
+| `description` | String? | Optional |
+| `latitude` | Float | Center latitude |
+| `longitude` | Float | Center longitude |
+| `radiusMeters` | Float | Radius in meters |
+| `isActive` | Boolean | Defaults to `true` |
+| `createdAt` | DateTime | Set on create |
+| `updatedAt` | DateTime | Updated on change |
+
+### `AlertEvent` (schema only — no runtime logic)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | String (`cuid`) | Primary key |
+| `geofenceId` | String | References `Geofence.id` (cascade delete) |
+| `eventType` | String | e.g. `ENTER` / `EXIT` |
+| `severity` | Enum `AlertSeverity` | `LOW`/`MEDIUM`/`HIGH`/`CRITICAL`, default `MEDIUM` |
+| `status` | Enum `AlertStatus` | `OPEN`/`ACKNOWLEDGED`/`RESOLVED`, default `OPEN` |
+| `message` | String | Required |
+| `source` | String? | Optional |
+| `latitude` | Float? | Optional |
+| `longitude` | Float? | Optional |
+| `createdAt` / `updatedAt` | DateTime | Timestamps |
+
+No API endpoints read or write `AlertEvent` yet; the model exists to support
+future alert workflows.
+
+---
+
+## Planned Schema (Roadmap — Not Implemented)
+
+The remainder of this document describes an aspirational relational design that
+adds users/ownership and assumes a PostgreSQL/PostGIS backend. None of it is
+implemented today.
+
+The planned database is organized around three main entities:
 
 | Table | Purpose |
 | --- | --- |

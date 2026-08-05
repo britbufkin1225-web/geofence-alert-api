@@ -1,10 +1,17 @@
 {
-  "name": "geofence-alert-temp",
-  "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "name": "geofence-alert-api",
+  "version": "0.1.0",
+  "description": "NestJS + Prisma REST API for managing circular geofences (early CRUD baseline).",
+  "author": "britsecdev",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/britbufkin1225-web/geofence-alert-api.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -12,7 +19,8 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
