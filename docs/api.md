@@ -21,27 +21,53 @@ The current backend includes a functional geofence domain module with support fo
 Application routes are served under the `/api/v1` prefix. The `/health` and
 `/status` operational endpoints remain unversioned at the root.
 
+## Authentication
+
+All routes are authenticated by default. Public routes: `/health`, `/status`,
+the `/api/v1` root banner, `POST /api/v1/auth/register`, and
+`POST /api/v1/auth/login`. Every other route requires an
+`Authorization: Bearer <token>` header carrying a JWT issued by register/login.
+
+The tenant context is derived from the verified token — never from the request
+body, query, params, or a client-supplied header. See
+[security.md](security.md) for the full model.
+
+| Method | Endpoint | Purpose | Auth | Status |
+| --- | --- | --- | --- | --- |
+| POST | `/api/v1/auth/register` | Create a user + tenant + membership atomically; returns a token | Public | Complete |
+| POST | `/api/v1/auth/login` | Authenticate by email + password; returns a token | Public | Complete |
+| GET | `/api/v1/auth/me` | Return the authenticated identity (never a password hash) | Bearer | Complete |
+
+Auth errors: malformed body → `400`; duplicate registration → `409`; invalid
+credentials → `401` (generic, no user enumeration); missing / malformed /
+expired / bad-signature / wrong-algorithm token → `401`.
+
 ## Operational Endpoints
 
-| Method | Endpoint | Purpose | Status |
-| --- | --- | --- | --- |
-| GET | `/health` | Liveness check | Complete |
-| GET | `/status` | Service metadata and runtime status | Complete |
-| GET | `/api/v1/db/status` | Database connectivity check | Complete |
+| Method | Endpoint | Purpose | Auth | Status |
+| --- | --- | --- | --- | --- |
+| GET | `/health` | Liveness check | Public | Complete |
+| GET | `/status` | Service metadata and runtime status | Public | Complete |
+| GET | `/api/v1/db/status` | Database connectivity check | Bearer | Complete |
 
 ## Geofence Endpoints
 
+All geofence routes require a Bearer token and operate only within the caller's
+tenant.
+
 | Method | Endpoint | Purpose | Status |
 | --- | --- | --- | --- |
-| POST | `/api/v1/geofences` | Create a new geofence | Complete |
-| GET | `/api/v1/geofences` | Retrieve geofences with pagination and filtering support | Complete |
-| GET | `/api/v1/geofences/summary` | Retrieve aggregate geofence summary counts | Complete |
-| GET | `/api/v1/geofences/:id` | Retrieve one geofence by ID | Complete |
-| PATCH | `/api/v1/geofences/:id` | Update one geofence by ID | Complete |
-| DELETE | `/api/v1/geofences/:id` | Delete one geofence by ID | Complete |
+| POST | `/api/v1/geofences` | Create a geofence owned by the caller's tenant | Complete |
+| GET | `/api/v1/geofences` | Retrieve the caller tenant's geofences (pagination/filtering) | Complete |
+| GET | `/api/v1/geofences/summary` | Aggregate summary for the caller's tenant | Complete |
+| GET | `/api/v1/geofences/:id` | Retrieve one geofence by ID (own tenant only) | Complete |
+| PATCH | `/api/v1/geofences/:id` | Update one geofence by ID (own tenant only) | Complete |
+| DELETE | `/api/v1/geofences/:id` | Delete one geofence by ID (own tenant only) | Complete |
 
 Route identifiers (`:id`) must be valid `cuid` values; malformed identifiers
-return `400`, while a valid-but-unknown id returns `404`.
+return `400`. A valid-but-unknown id returns `404`, **as does a valid id that
+belongs to another tenant** — the API does not disclose the existence of
+resources outside the caller's tenant.
 
 ---
 
@@ -70,7 +96,17 @@ and sorting.
 | `radiusMeters` | Number in `1`…`5000` meters (inclusive) |
 
 Unknown properties are rejected. Update requests reject empty bodies and bodies
-containing only unknown fields.
+containing only unknown fields. Ownership fields such as `tenantId` are never
+accepted on create or update (rejected as unknown properties), so ownership
+cannot be forged or reassigned by a client.
+
+### Auth request body limits
+
+| Field | Rule |
+| --- | --- |
+| `email` | Required, valid email, canonicalized (trim + lowercase), max 254 chars, unique |
+| `password` | Required string, 8–72 chars, never trimmed/transformed, never returned or logged |
+| `tenantName` | Required string, trimmed, 1–120 chars, not blank |
 
 ## Error Contract
 

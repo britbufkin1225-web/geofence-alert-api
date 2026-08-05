@@ -28,33 +28,47 @@ npm run test
 The current verified test state is:
 
 ```text
-Test Suites: 1 passed
-Tests: 3 passed
+Test Suites: 10 passed
+Tests: 116 passed
 ```
+
+Run the suite deterministically with `npm test -- --runInBand`.
+
+## Test Architecture
+
+- **Unit tests** — services/controllers with a mocked Prisma provider
+  (`geofences.service.spec.ts`, `geofences.controller.spec.ts`,
+  `password.service.spec.ts`).
+- **HTTP tests** — a real Nest app booted with a mocked Prisma layer, exercising
+  routing, the global validation pipe, the auth guard, and the error contract
+  (`geofences.http.spec.ts`, `auth/auth.http.spec.ts`). No database required.
+- **Real database integration test** — `auth/tenant-isolation.spec.ts`
+  provisions an isolated temporary SQLite database, applies the project's actual
+  migrations, and drives the API end-to-end to prove the tenant boundary. It
+  never touches `dev.db` and cleans up after itself.
+
+> Terminology note: the mocked HTTP tests are **not** database integration tests.
+> Only `tenant-isolation.spec.ts` runs against a real database.
 
 ## Current Test Coverage
 
-Current test coverage includes geofence summary service behavior.
-
-The summary test suite verifies:
-
-- Aggregate geofence summary counts
-- Empty-state summary behavior
-- Mixed-status summary behavior
+- Geofence service/controller CRUD, summary, and tenant scoping
+- Auth registration/login validation matrix (email, password, tenant-name bounds)
+- Token handling: missing, malformed, altered (bad signature), expired, `alg: none`
+- Password hashing: no plaintext, per-hash salt, bcrypt 72-byte bound
+- Tenant-isolation matrix (real DB): list/get/patch/delete/search/pagination/
+  summary cannot cross tenants; ownership cannot be forged or reassigned
+- User enumeration resistance (generic 401 for wrong password vs unknown account)
+- DTO validation boundaries and route-identifier (cuid) validation
+- `/api/v1` routing and unversioned public `/health` and `/status`
+- Unknown-field / mass-assignment rejection and the stable, non-leaky error contract
 
 ## Planned Test Coverage
 
 Additional planned test coverage includes:
 
-- Geofence creation behavior
-- Geofence retrieval behavior
-- Geofence update behavior
-- Geofence deletion behavior
-- Pagination behavior
-- Status filtering behavior
-- Controller route behavior
-- Not-found error handling
-- DTO validation edge cases
+- Location-event processing behavior
+- Spatial containment / point-in-geofence evaluation
 - Alert workflow behavior
 
 ## Testing Notes

@@ -1,5 +1,6 @@
 export class GeofenceResponseDto {
   id!: string;
+  tenantId!: string;
   name!: string;
   description!: string | null;
   latitude!: number;

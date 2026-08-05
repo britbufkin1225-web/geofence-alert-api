@@ -6,17 +6,24 @@ import { CreateGeofenceDto } from './dto/create-geofence.dto';
 import { QueryGeofencesDto } from './dto/query-geofences.dto';
 import { UpdateGeofenceDto } from './dto/update-geofence.dto';
 
+/**
+ * All methods take an authoritative `tenantId` (derived from the authenticated
+ * principal, never from client input) and scope every query by it. Tenant
+ * ownership is set server-side on create and is never accepted from, or
+ * mutated by, the request body. Cross-tenant lookups resolve to 404 so a caller
+ * cannot even confirm that another tenant's resource exists.
+ */
 @Injectable()
 export class GeofencesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createGeofenceDto: CreateGeofenceDto) {
+  async create(createGeofenceDto: CreateGeofenceDto, tenantId: string) {
     return this.prisma.geofence.create({
-      data: createGeofenceDto,
+      data: { ...createGeofenceDto, tenant: { connect: { id: tenantId } } },
     });
   }
 
-  async findAll(query: QueryGeofencesDto) {
+  async findAll(query: QueryGeofencesDto, tenantId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const skip = (page - 1) * limit;
@@ -24,7 +31,9 @@ export class GeofencesService {
     const sortBy = query.sortBy ?? 'createdAt';
     const sortOrder = query.sortOrder ?? 'desc';
 
-    const where: Prisma.GeofenceWhereInput = {};
+    // tenantId is always part of the query predicate, so listing, filtering,
+    // searching and pagination can never span tenants.
+    const where: Prisma.GeofenceWhereInput = { tenantId };
 
     if (query.active !== undefined) {
       where.isActive = query.active;
@@ -73,10 +82,14 @@ export class GeofencesService {
     };
   }
 
-  async findOne(id: string) {
-    const geofence = await this.prisma.geofence.findUnique({
+  async findOne(id: string, tenantId: string) {
+    // Scope the lookup itself by tenant (findFirst with an id+tenantId
+    // predicate) rather than fetching by id and comparing afterwards. A
+    // geofence owned by another tenant is indistinguishable from a missing one.
+    const geofence = await this.prisma.geofence.findFirst({
       where: {
         id,
+        tenantId,
       },
     });
 
@@ -87,23 +100,26 @@ export class GeofencesService {
     return geofence;
   }
 
-  async getSummary() {
+  async getSummary(tenantId: string) {
     const [total, active, inactive, radiusStats] = await Promise.all([
-      this.prisma.geofence.count(),
+      this.prisma.geofence.count({ where: { tenantId } }),
 
       this.prisma.geofence.count({
         where: {
+          tenantId,
           isActive: true,
         },
       }),
 
       this.prisma.geofence.count({
         where: {
+          tenantId,
           isActive: false,
         },
       }),
 
       this.prisma.geofence.aggregate({
+        where: { tenantId },
         _min: {
           radiusMeters: true,
         },
@@ -128,8 +144,15 @@ export class GeofencesService {
     };
   }
 
-  async update(id: string, updateGeofenceDto: UpdateGeofenceDto) {
-    await this.findOne(id);
+  async update(
+    id: string,
+    updateGeofenceDto: UpdateGeofenceDto,
+    tenantId: string,
+  ) {
+    // Confirms tenant ownership via a scoped read (404 otherwise), then updates
+    // by id. The DTO cannot carry `tenantId`, so ownership can never be
+    // reassigned through a PATCH (mass-assignment safe).
+    await this.findOne(id, tenantId);
 
     return this.prisma.geofence.update({
       where: {
@@ -139,8 +162,8 @@ export class GeofencesService {
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
+  async remove(id: string, tenantId: string) {
+    await this.findOne(id, tenantId);
 
     return this.prisma.geofence.delete({
       where: {
