@@ -11,6 +11,7 @@ import request from 'supertest';
 
 import { AppModule } from '../app.module';
 import { setupApp } from '../app.setup';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * REAL database integration test (not a Prisma mock). It provisions a fresh,
@@ -42,6 +43,21 @@ interface MigrationDb {
 const OpenDatabase = DatabaseConstructor as unknown as new (
   path: string,
 ) => MigrationDb;
+
+function decodeIdentityClaims(
+  jwt: JwtService,
+  token: string,
+): { sub: string; mid: string } {
+  const decoded: unknown = jwt.decode(token);
+  if (!decoded || typeof decoded !== 'object') {
+    throw new Error('Expected a JWT object payload');
+  }
+  const claims = decoded as Record<string, unknown>;
+  if (typeof claims.sub !== 'string' || typeof claims.mid !== 'string') {
+    throw new Error('Expected JWT identity claims');
+  }
+  return { sub: claims.sub, mid: claims.mid };
+}
 
 function applyMigrations(dbFile: string): void {
   const migrationsDir = path.join(process.cwd(), 'prisma', 'migrations');
@@ -77,6 +93,7 @@ describe('Tenant isolation (real SQLite integration)', () => {
   let app: INestApplication;
   let server: Server;
   let jwt: JwtService;
+  let prisma: PrismaService;
   let tmpDir: string;
   let dbFile: string;
   const originalDatabaseUrl = process.env.DATABASE_URL;
@@ -122,6 +139,7 @@ describe('Tenant isolation (real SQLite integration)', () => {
     await app.init();
     server = app.getHttpServer() as Server;
     jwt = app.get(JwtService, { strict: false });
+    prisma = app.get(PrismaService);
 
     const a = await register('alice@example.com', 'password-A1', 'Tenant A');
     const b = await register('bob@example.com', 'password-B1', 'Tenant B');
@@ -345,6 +363,45 @@ describe('Tenant isolation (real SQLite integration)', () => {
         .expect(401);
     });
 
+    it('rejects a correctly signed token without an expiration claim', async () => {
+      const noExpiry = await jwt.signAsync(
+        { sub: 'x', tid: 'y', mid: 'z' },
+        { noTimestamp: true },
+      );
+      await request(server)
+        .get('/api/v1/auth/me')
+        .set('Authorization', auth(noExpiry))
+        .expect(401);
+    });
+
+    it('rejects a valid signature with an inconsistent membership tuple', async () => {
+      const claims = decodeIdentityClaims(jwt, tokenA);
+      const forgedTuple = await jwt.signAsync({
+        sub: claims.sub,
+        tid: tenantBId,
+        mid: claims.mid,
+      });
+      await request(server)
+        .get('/api/v1/geofences')
+        .set('Authorization', auth(forgedTuple))
+        .expect(401);
+    });
+
+    it('revokes geofence access when the backing membership is deleted', async () => {
+      const revoked = await register(
+        'revoked@example.com',
+        'password-R1',
+        'Revoked Tenant',
+      );
+      const decoded = decodeIdentityClaims(jwt, revoked.accessToken);
+      await prisma.membership.delete({ where: { id: decoded.mid } });
+
+      await request(server)
+        .get('/api/v1/geofences')
+        .set('Authorization', auth(revoked.accessToken))
+        .expect(401);
+    });
+
     it('rejects an unsigned ("alg: none") token', async () => {
       const b64 = (obj: unknown) =>
         Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -356,6 +413,18 @@ describe('Tenant isolation (real SQLite integration)', () => {
       await request(server)
         .get('/api/v1/auth/me')
         .set('Authorization', auth(noneToken))
+        .expect(401);
+    });
+
+    it('rejects a token signed with an alternate algorithm', async () => {
+      const claims = decodeIdentityClaims(jwt, tokenA);
+      const wrongAlgorithm = await jwt.signAsync(
+        { sub: claims.sub, tid: tenantAId, mid: claims.mid },
+        { algorithm: 'HS384' },
+      );
+      await request(server)
+        .get('/api/v1/geofences')
+        .set('Authorization', auth(wrongAlgorithm))
         .expect(401);
     });
   });

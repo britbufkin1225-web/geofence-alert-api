@@ -11,11 +11,13 @@ import { normalizeEmail } from '../../common/transforms/normalize-email.transfor
 import { trim } from '../../common/transforms/trim.transform';
 import {
   EMAIL_MAX_LENGTH,
+  PASSWORD_MAX_BYTES,
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   TENANT_NAME_MAX_LENGTH,
   TENANT_NAME_MIN_LENGTH,
 } from '../auth.constants';
+import { MaxUtf8Bytes } from '../validators/max-utf8-bytes.decorator';
 
 export class RegisterDto {
   @IsString()
@@ -31,6 +33,7 @@ export class RegisterDto {
   @IsNotEmpty()
   @MinLength(PASSWORD_MIN_LENGTH)
   @MaxLength(PASSWORD_MAX_LENGTH)
+  @MaxUtf8Bytes(PASSWORD_MAX_BYTES)
   password!: string;
 
   @IsString()

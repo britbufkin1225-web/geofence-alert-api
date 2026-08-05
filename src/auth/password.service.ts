@@ -16,6 +16,9 @@ export class PasswordService {
   }
 
   async verify(plain: string, hash: string): Promise<boolean> {
+    if (Buffer.byteLength(plain, 'utf8') > PASSWORD_MAX_BYTES) {
+      return false;
+    }
     return bcrypt.compare(plain, hash);
   }
 

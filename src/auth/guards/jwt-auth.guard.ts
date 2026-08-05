@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 
+import { PrismaService } from '../../prisma/prisma.service';
 import { IS_PUBLIC_KEY, JWT_ALGORITHM } from '../auth.constants';
 import {
   AuthenticatedPrincipal,
@@ -17,7 +18,8 @@ import {
 /**
  * Global authentication guard. Every route is protected unless explicitly
  * marked with @Public(). It extracts a Bearer token, verifies the signature,
- * algorithm and expiry, and attaches a typed principal to the request.
+ * algorithm and expiry, revalidates the exact membership tuple, and attaches a
+ * typed principal to the request.
  *
  * All failure modes (missing, malformed, expired, wrong-algorithm, bad
  * signature, or structurally incomplete tokens) collapse to the same generic
@@ -28,6 +30,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
     private readonly reflector: Reflector,
+    private readonly prisma: PrismaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -58,7 +61,26 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Authentication required');
     }
 
-    if (!claims?.sub || !claims?.tid || !claims?.mid) {
+    if (
+      typeof claims?.sub !== 'string' ||
+      typeof claims?.tid !== 'string' ||
+      typeof claims?.mid !== 'string' ||
+      typeof claims.exp !== 'number' ||
+      !Number.isFinite(claims.exp)
+    ) {
+      throw new UnauthorizedException('Authentication required');
+    }
+
+    const membership = await this.prisma.membership.findFirst({
+      where: {
+        id: claims.mid,
+        userId: claims.sub,
+        tenantId: claims.tid,
+      },
+      select: { id: true },
+    });
+
+    if (!membership) {
       throw new UnauthorizedException('Authentication required');
     }
 

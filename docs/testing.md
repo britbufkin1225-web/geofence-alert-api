@@ -46,6 +46,9 @@ Run the suite deterministically with `npm test -- --runInBand`.
   provisions an isolated temporary SQLite database, applies the project's actual
   migrations, and drives the API end-to-end to prove the tenant boundary. It
   never touches `dev.db` and cleans up after itself.
+- **Migration regression test** — `auth/migration.spec.ts` applies the GF-1
+  schema, inserts legacy data, and proves the GF-2 migration preserves it under
+  the non-authenticatable bootstrap tenant with its foreign key and index.
 
 > Terminology note: the mocked HTTP tests are **not** database integration tests.
 > Only `tenant-isolation.spec.ts` runs against a real database.
@@ -54,8 +57,9 @@ Run the suite deterministically with `npm test -- --runInBand`.
 
 - Geofence service/controller CRUD, summary, and tenant scoping
 - Auth registration/login validation matrix (email, password, tenant-name bounds)
-- Token handling: missing, malformed, altered (bad signature), expired, `alg: none`
-- Password hashing: no plaintext, per-hash salt, bcrypt 72-byte bound
+- Token handling: missing, malformed, altered (bad signature), missing/expired
+  expiry, `alg: none`, inconsistent claims, and deleted memberships
+- Password hashing: no plaintext, per-hash salt, bcrypt 72-byte/UTF-8 bound
 - Tenant-isolation matrix (real DB): list/get/patch/delete/search/pagination/
   summary cannot cross tenants; ownership cannot be forged or reassigned
 - User enumeration resistance (generic 401 for wrong password vs unknown account)

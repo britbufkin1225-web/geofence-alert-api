@@ -24,4 +24,10 @@ describe('PasswordService', () => {
   it('rejects input beyond bcrypt 72-byte limit rather than silently truncating', async () => {
     await expect(service.hash('a'.repeat(73))).rejects.toThrow();
   });
+
+  it('rejects multibyte input beyond the bcrypt byte limit during verification', async () => {
+    const atLimit = '€'.repeat(24);
+    const hash = await service.hash(atLimit);
+    await expect(service.verify(`${atLimit}a`, hash)).resolves.toBe(false);
+  });
 });

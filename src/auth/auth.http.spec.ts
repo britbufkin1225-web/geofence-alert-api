@@ -103,6 +103,13 @@ describe('Auth API validation (HTTP)', () => {
       }).expect(400);
     });
 
+    it('rejects a password over 72 UTF-8 bytes even below 72 characters', async () => {
+      await postRegister({
+        ...validRegister,
+        password: '€'.repeat(25),
+      }).expect(400);
+    });
+
     it('rejects a null password', async () => {
       await postRegister({ ...validRegister, password: null }).expect(400);
     });
@@ -145,6 +152,13 @@ describe('Auth API validation (HTTP)', () => {
       await postLogin({
         email: 'user@example.com',
         password: 'a'.repeat(73),
+      }).expect(400);
+    });
+
+    it('rejects a multibyte password over the bcrypt byte boundary', async () => {
+      await postLogin({
+        email: 'user@example.com',
+        password: '€'.repeat(25),
       }).expect(400);
     });
   });

@@ -188,7 +188,7 @@ Auth request bodies are validated with these bounds:
 | Field | Rule |
 | --- | --- |
 | `email` | Required, structurally valid email, canonicalized (trimmed + lowercased), max 254 characters, unique |
-| `password` | Required string, 8–72 characters, **never trimmed or transformed**, never returned or logged |
+| `password` | Required string, 8–72 characters and at most 72 UTF-8 bytes, **never trimmed or transformed**, never returned or logged |
 | `tenantName` | Required string, trimmed, 1–120 characters, not blank |
 
 Update requests reject empty bodies and bodies containing only unknown fields.

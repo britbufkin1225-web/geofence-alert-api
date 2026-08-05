@@ -229,7 +229,7 @@ describe('GeofencesService', () => {
       });
       // Ownership is never part of the update payload.
       expect(mockPrismaService.geofence.update).toHaveBeenCalledWith({
-        where: { id: 'geofence-1' },
+        where: { id: 'geofence-1', tenantId: TENANT_A },
         data: dto,
       });
     });
@@ -270,7 +270,7 @@ describe('GeofencesService', () => {
         where: { id: 'geofence-1', tenantId: TENANT_A },
       });
       expect(mockPrismaService.geofence.delete).toHaveBeenCalledWith({
-        where: { id: 'geofence-1' },
+        where: { id: 'geofence-1', tenantId: TENANT_A },
       });
     });
 

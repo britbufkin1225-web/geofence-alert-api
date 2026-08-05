@@ -52,8 +52,8 @@ The backend currently supports:
 Current verified test status:
 
 ```text
-Test Suites: 10 passed
-Tests: 116 passed
+Test Suites: 11 passed
+Tests: 124 passed
 ```
 
 Most tests boot a real Nest application with a mocked Prisma layer (no database
@@ -64,8 +64,10 @@ Current test coverage includes:
 
 - Geofence service/controller CRUD, summary, and tenant scoping
 - Auth registration/login validation matrix and token handling
-- Password hashing behavior (no plaintext, salted, 72-byte bound)
+- Password hashing behavior (no plaintext, salted, 72-byte UTF-8 bound)
 - Real-database tenant-isolation matrix (IDOR/BOLA)
+- Stale/deleted membership and inconsistent JWT-claim rejection
+- Existing-data migration preservation and bootstrap-tenant isolation
 - DTO validation boundaries and route-identifier (cuid) validation
 - `/api/v1` routing, the auth guard, and unversioned `/health` and `/status`
 - Unknown-field / mass-assignment rejection and the stable error contract

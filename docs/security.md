@@ -13,7 +13,8 @@ compliance document.
 2. `POST /api/v1/auth/login` — verifies email + password and returns a signed
    JWT.
 3. Authenticated requests send `Authorization: Bearer <token>`. A global guard
-   verifies the token and attaches a typed principal to the request.
+  verifies the token, requires an expiry, revalidates the exact
+  membership/user/tenant tuple, and attaches a typed principal to the request.
 4. `GET /api/v1/auth/me` — returns the identity resolved from the verified
    principal, re-validated against the database.
 
@@ -21,7 +22,7 @@ compliance document.
 
 - Passwords are hashed with **bcrypt** (`bcryptjs`, cost 10). Plaintext is never
   stored, returned in any response, or logged.
-- Bounds: 8–72 characters. Passwords are never trimmed or transformed. Input
+- Bounds: 8–72 characters and at most 72 UTF-8 bytes. Passwords are never trimmed or transformed. Input
   beyond bcrypt's 72-byte limit is rejected rather than silently truncated.
 - Password hashes are never serialized into user/principal objects returned to
   clients.
@@ -31,7 +32,7 @@ compliance document.
 - Algorithm is pinned to **HS256** on both signing and verification. Unsigned
   (`alg: none`) and wrong-algorithm tokens are rejected (algorithm-confusion
   defense).
-- Signature verification and expiry (`JWT_EXPIRES_IN`, default `1h`) are
+- Signature verification and an explicit expiry (`JWT_EXPIRES_IN`, default `1h`) are
   required. Missing, malformed, altered, and expired tokens all collapse to the
   same generic `401`.
 - Claims contain only ids: `sub` (user), `tid` (tenant), `mid` (membership). No
@@ -50,7 +51,8 @@ compliance document.
 ## Tenant derivation
 
 - The authoritative tenant is derived from the verified token's `tid` claim
-  (backed by a real `Membership`), exposed as a typed
+  after the guard confirms the exact `mid`/`sub`/`tid` tuple still exists in
+  the database, exposed as a typed
   `AuthenticatedPrincipal { userId, tenantId, membershipId }`.
 - Tenant identity is **never** read from the request body, query string, URL
   parameter, or a client-supplied header.

@@ -149,14 +149,14 @@ export class GeofencesService {
     updateGeofenceDto: UpdateGeofenceDto,
     tenantId: string,
   ) {
-    // Confirms tenant ownership via a scoped read (404 otherwise), then updates
-    // by id. The DTO cannot carry `tenantId`, so ownership can never be
-    // reassigned through a PATCH (mass-assignment safe).
+    // Confirm ownership for the non-disclosing 404 contract, then retain the
+    // tenant predicate on the mutation itself as defense in depth.
     await this.findOne(id, tenantId);
 
     return this.prisma.geofence.update({
       where: {
         id,
+        tenantId,
       },
       data: updateGeofenceDto,
     });
@@ -168,6 +168,7 @@ export class GeofencesService {
     return this.prisma.geofence.delete({
       where: {
         id,
+        tenantId,
       },
     });
   }

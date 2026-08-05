@@ -64,6 +64,9 @@ describe('Geofence API (HTTP)', () => {
   const mockPrisma = {
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
+    membership: {
+      findFirst: jest.fn(),
+    },
     geofence: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -106,6 +109,7 @@ describe('Geofence API (HTTP)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockResolvedValue([[sampleGeofence], 1]);
+    mockPrisma.membership.findFirst.mockResolvedValue({ id: AUTH_MEMBERSHIP });
     mockPrisma.geofence.create.mockResolvedValue(sampleGeofence);
     mockPrisma.geofence.findFirst.mockResolvedValue(sampleGeofence);
   });
