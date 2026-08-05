@@ -1,6 +1,18 @@
 # API Endpoint Design
 
-This document outlines the planned API endpoints for the GeoFence Alert API.
+This document outlines the **planned** API endpoints for the GeoFence Alert API.
+
+> **Implementation status.** This is a forward-looking design document. Only the
+> geofence and operational endpoints are implemented today. Tracked devices,
+> location events, alert events, and any authentication (`401`) responses shown
+> below are **not implemented**. Two differences from this design exist in the
+> current code:
+>
+> - `/health` and `/status` are served **unversioned at the root**, not under
+>   `/api/v1` as drawn below.
+> - Identifiers are `cuid` strings, not UUIDs.
+>
+> For the endpoints that actually exist, see [docs/api.md](api.md).
 
 The API is designed to support geofence management, tracked devices, location event submission, and alert event history for enter/exit geofence workflows.
 

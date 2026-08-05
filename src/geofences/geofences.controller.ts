@@ -9,6 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 
+import { ParseCuidPipe } from '../common/pipes/parse-cuid.pipe';
 import { CreateGeofenceDto } from './dto/create-geofence.dto';
 import { UpdateGeofenceDto } from './dto/update-geofence.dto';
 import { QueryGeofencesDto } from './dto/query-geofences.dto';
@@ -34,20 +35,20 @@ export class GeofencesController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseCuidPipe) id: string) {
     return this.geofencesService.findOne(id);
   }
 
   @Patch(':id')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseCuidPipe) id: string,
     @Body() updateGeofenceDto: UpdateGeofenceDto,
   ) {
     return this.geofencesService.update(id, updateGeofenceDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseCuidPipe) id: string) {
     return this.geofencesService.remove(id);
   }
 }

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-
 import { Transform, type TransformFnParams } from 'class-transformer';
 import {
   IsBoolean,
@@ -7,8 +5,18 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
+  MaxLength,
   Min,
 } from 'class-validator';
+
+import {
+  GEOFENCE_SEARCH_MAX_LENGTH,
+  PAGINATION_DEFAULT_LIMIT,
+  PAGINATION_DEFAULT_PAGE,
+  PAGINATION_MAX_LIMIT,
+  PAGINATION_MIN_LIMIT,
+} from './geofence.constants';
 
 function toNumber({ value }: TransformFnParams): unknown {
   if (typeof value === 'number') {
@@ -51,14 +59,15 @@ export class QueryGeofencesDto {
   @IsOptional()
   @Transform(toNumber)
   @IsInt()
-  @Min(1)
-  page?: number = 1;
+  @Min(PAGINATION_MIN_LIMIT)
+  page?: number = PAGINATION_DEFAULT_PAGE;
 
   @IsOptional()
   @Transform(toNumber)
   @IsInt()
-  @Min(1)
-  limit?: number = 10;
+  @Min(PAGINATION_MIN_LIMIT)
+  @Max(PAGINATION_MAX_LIMIT)
+  limit?: number = PAGINATION_DEFAULT_LIMIT;
 
   @IsOptional()
   @Transform(toBoolean)
@@ -67,6 +76,7 @@ export class QueryGeofencesDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(GEOFENCE_SEARCH_MAX_LENGTH)
   search?: string;
 
   @IsOptional()

@@ -48,26 +48,28 @@ The backend currently supports:
 Current verified test status:
 
 ```text
-Test Suites: 1 passed
-Tests: 3 passed
+Test Suites: 7 passed
+Tests: 71 passed
 ```
+
+The suite runs without a database: HTTP-level tests boot a real Nest
+application with a mocked Prisma layer.
 
 Current test coverage includes:
 
-- Geofence summary service behavior
-- Empty-state summary behavior
-- Mixed-status summary behavior
-- Aggregate summary count validation
+- Geofence service CRUD and summary behavior
+- Controller route behavior and not-found handling
+- DTO validation boundaries (name, latitude, longitude, radius, pagination, search)
+- Route-identifier (cuid) validation
+- `/api/v1` routing and unversioned `/health` and `/status`
+- Unknown-field rejection and the stable error contract
+- No internal error-detail leakage on failure paths
 
 ## Known Planned Work
 
 Upcoming development work includes:
 
-- Expanded unit tests for geofence CRUD behavior
-- Pagination tests
-- Status filtering tests
-- Controller route tests
-- Not-found behavior tests
+- Real database integration tests
 - Alert domain planning
 - Location event workflow planning
 - Request and response examples for API documentation
