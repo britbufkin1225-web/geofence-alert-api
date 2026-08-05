@@ -277,7 +277,7 @@ Current verified test state:
 
 ```text
 Test Suites: 7 passed
-Tests: 71 passed
+Tests: 73 passed
 ```
 
 Additional planned testing includes:

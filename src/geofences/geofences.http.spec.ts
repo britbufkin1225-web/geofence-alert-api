@@ -196,6 +196,14 @@ describe('Geofence API (HTTP)', () => {
         .send({ hacker: true })
         .expect(400);
     });
+
+    it('rejects null instead of passing it to Prisma', async () => {
+      await request(server)
+        .patch(`/api/v1/geofences/${VALID_CUID}`)
+        .send({ name: null })
+        .expect(400);
+      expect(mockPrisma.geofence.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('error contract', () => {

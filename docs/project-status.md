@@ -49,7 +49,7 @@ Current verified test status:
 
 ```text
 Test Suites: 7 passed
-Tests: 71 passed
+Tests: 73 passed
 ```
 
 The suite runs without a database: HTTP-level tests boot a real Nest

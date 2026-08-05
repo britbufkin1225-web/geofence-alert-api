@@ -149,6 +149,21 @@ describe('UpdateGeofenceDto', () => {
     ).resolves.toContain('name');
   });
 
+  it('rejects null for every updatable field', async () => {
+    for (const field of [
+      'name',
+      'latitude',
+      'longitude',
+      'radiusMeters',
+      'description',
+      'isActive',
+    ]) {
+      await expect(
+        validationErrors(UpdateGeofenceDto, { [field]: null }),
+      ).resolves.toContain(field);
+    }
+  });
+
   it('keeps omitted fields undefined for a partial update', () => {
     const instance = plainToInstance(UpdateGeofenceDto, { isActive: false });
     expect(instance.name).toBeUndefined();

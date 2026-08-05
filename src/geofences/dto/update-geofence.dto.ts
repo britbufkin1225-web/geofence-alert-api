@@ -3,12 +3,12 @@ import {
   IsBoolean,
   IsNotEmpty,
   IsNumber,
-  IsOptional,
   IsString,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 import { AtLeastOneField } from '../../common/validators/at-least-one-field.decorator';
@@ -27,7 +27,7 @@ import {
 
 @AtLeastOneField()
 export class UpdateGeofenceDto {
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @Transform(trim)
   @IsNotEmpty()
@@ -35,31 +35,31 @@ export class UpdateGeofenceDto {
   @MaxLength(GEOFENCE_NAME_MAX_LENGTH)
   name?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsNumber()
   @Min(GEOFENCE_LATITUDE_MIN)
   @Max(GEOFENCE_LATITUDE_MAX)
   latitude?: number;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsNumber()
   @Min(GEOFENCE_LONGITUDE_MIN)
   @Max(GEOFENCE_LONGITUDE_MAX)
   longitude?: number;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsNumber()
   @Min(GEOFENCE_RADIUS_MIN_METERS)
   @Max(GEOFENCE_RADIUS_MAX_METERS)
   radiusMeters?: number;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @Transform(trim)
   @MaxLength(GEOFENCE_DESCRIPTION_MAX_LENGTH)
   description?: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsBoolean()
   isActive?: boolean;
 }
