@@ -1,22 +1,56 @@
 # Database Schema
 
 > **Implementation status.** The **current** Prisma schema (SQLite) contains
-> only two models: `Geofence` and `AlertEvent`. Primary keys are string `cuid`
-> values, **not** UUIDs. There is **no `users` table**, no `user_id` foreign
-> key, and no ownership relationship. The `users` table, user ownership, and the
-> PostgreSQL/PostGIS design described later in this document are **planned future
-> work** and are documented here as a roadmap, not as current functionality.
+> `User`, `Tenant`, `Membership`, `Geofence`, and `AlertEvent`. Primary keys are
+> string `cuid` values, **not** UUIDs. Identity and per-tenant ownership are
+> implemented (GF-2). The PostgreSQL/PostGIS design described later in this
+> document remains **planned future work** and is documented here as a roadmap,
+> not as current functionality. The legacy "planned" section below predates GF-2
+> and uses `users`/`user_id` naming that differs from the implemented
+> tenant-based model.
 
 ## Current Schema (Implemented)
 
 Source of truth: [`prisma/schema.prisma`](../prisma/schema.prisma), provider
 `sqlite`.
 
+### `User` (implemented)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | String (`cuid`) | Primary key |
+| `email` | String | **Unique** login identity (canonicalized: trimmed + lowercased) |
+| `passwordHash` | String | Bcrypt hash; plaintext is never stored |
+| `createdAt` | DateTime | Set on create |
+| `updatedAt` | DateTime | Updated on change |
+
+### `Tenant` (implemented)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | String (`cuid`) | Primary key |
+| `name` | String | Human-readable tenant name |
+| `createdAt` | DateTime | Set on create |
+| `updatedAt` | DateTime | Updated on change |
+
+### `Membership` (implemented)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | String (`cuid`) | Primary key |
+| `userId` | String | FK → `User.id` (cascade delete) |
+| `tenantId` | String | FK → `Tenant.id` (cascade delete) |
+| `createdAt` / `updatedAt` | DateTime | Timestamps |
+
+Unique constraint on `(userId, tenantId)`; indexed on `tenantId`. Membership is
+the explicit link that authorizes a user to act within a tenant.
+
 ### `Geofence` (implemented)
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | String (`cuid`) | Primary key |
+| `tenantId` | String | **Required** FK → `Tenant.id` (cascade delete); set server-side, indexed |
 | `name` | String | Required |
 | `description` | String? | Optional |
 | `latitude` | Float | Center latitude |
@@ -25,6 +59,19 @@ Source of truth: [`prisma/schema.prisma`](../prisma/schema.prisma), provider
 | `isActive` | Boolean | Defaults to `true` |
 | `createdAt` | DateTime | Set on create |
 | `updatedAt` | DateTime | Updated on change |
+
+Every query for tenant-owned data is scoped by `tenantId` derived from the
+authenticated principal. See [security.md](security.md).
+
+### Migration & existing data
+
+The GF-2 migration (`add_identity_tenant_ownership`) adds the identity/tenant
+tables and the required `Geofence.tenantId`. Because a required relation cannot
+be added to a non-empty table, the migration provisions one deterministic
+**legacy bootstrap tenant** and backfills any pre-existing geofences to it. That
+tenant has no user/membership, so its rows are unreachable through the
+authenticated API — historical demo data is preserved without fabricating real
+ownership. No data was reset or deleted.
 
 ### `AlertEvent` (schema only — no runtime logic)
 
@@ -48,9 +95,15 @@ future alert workflows.
 
 ## Planned Schema (Roadmap — Not Implemented)
 
+> **Note:** This section predates GF-2 and is retained as historical roadmap
+> context. Identity and ownership are now implemented via the tenant-based model
+> above (`User`/`Tenant`/`Membership`), which supersedes the `users`/`user_id`
+> naming used below. The PostgreSQL/PostGIS backend and spatial design here remain
+> unimplemented.
+
 The remainder of this document describes an aspirational relational design that
-adds users/ownership and assumes a PostgreSQL/PostGIS backend. None of it is
-implemented today.
+adds users/ownership and assumes a PostgreSQL/PostGIS backend. The spatial/GIS
+portions are not implemented today.
 
 The planned database is organized around three main entities:
 

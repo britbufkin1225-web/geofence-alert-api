@@ -19,8 +19,54 @@ enum AlertStatus {
   RESOLVED
 }
 
+// Authenticated identity. Login identity is the canonicalized (trimmed +
+// lowercased) email, enforced unique at the database layer. Only the bcrypt
+// password hash is stored; plaintext passwords are never persisted or logged.
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  memberships  Membership[]
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+// A tenant is the unit of data ownership and isolation. Every geofence belongs
+// to exactly one tenant, and access is only ever granted through a validated
+// membership.
+model Tenant {
+  id          String       @id @default(cuid())
+  name        String
+  memberships Membership[]
+  geofences   Geofence[]
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+// Explicit user<->tenant relationship. Keeping membership separate from the
+// user record lets the authorization model grow (multiple tenants per user,
+// roles) later without redesigning identity. The (userId, tenantId) pair is
+// unique so a user cannot join the same tenant twice.
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+}
+
 model Geofence {
   id           String       @id @default(cuid())
+  tenantId     String
   name         String
   description  String?
   latitude     Float
@@ -28,10 +74,13 @@ model Geofence {
   radiusMeters Float
   isActive     Boolean      @default(true)
 
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   alertEvents  AlertEvent[]
 
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+
+  @@index([tenantId])
 }
 
 model AlertEvent {

@@ -1,5 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
 
+import { Public } from '../auth/decorators/public.decorator';
+
+// Operational probes must be reachable without authentication so external
+// health/liveness checks keep working.
+@Public()
 @Controller()
 export class HealthController {
   @Get('health')

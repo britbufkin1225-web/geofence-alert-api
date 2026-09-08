@@ -4,9 +4,13 @@ This document tracks the current development state of the GeoFence Alert API.
 
 ## Current Status
 
-The GeoFence Alert API currently has a functional geofence domain module with CRUD support, DTO validation, pagination, status filtering, and summary reporting.
+The GeoFence Alert API is an authenticated, multi-tenant backend. It has a
+functional geofence domain module (CRUD, DTO validation, pagination, status
+filtering, summary reporting) plus user identity, bcrypt password
+authentication, JWT sessions, and strict per-tenant isolation (GF-2).
 
-The project is currently in the backend feature foundation stage. Core geofence functionality is implemented, and testing has started around summary behavior.
+Spatial evaluation, location-event ingestion, alerting, and PostgreSQL/PostGIS
+remain planned future work.
 
 ## Completed Work
 
@@ -48,28 +52,32 @@ The backend currently supports:
 Current verified test status:
 
 ```text
-Test Suites: 7 passed
-Tests: 73 passed
+Test Suites: 11 passed
+Tests: 124 passed
 ```
 
-The suite runs without a database: HTTP-level tests boot a real Nest
-application with a mocked Prisma layer.
+Most tests boot a real Nest application with a mocked Prisma layer (no database
+required). Tenant isolation is additionally proven by a real database
+integration test against an isolated temporary SQLite database.
 
 Current test coverage includes:
 
-- Geofence service CRUD and summary behavior
-- Controller route behavior and not-found handling
-- DTO validation boundaries (name, latitude, longitude, radius, pagination, search)
-- Route-identifier (cuid) validation
-- `/api/v1` routing and unversioned `/health` and `/status`
-- Unknown-field rejection and the stable error contract
+- Geofence service/controller CRUD, summary, and tenant scoping
+- Auth registration/login validation matrix and token handling
+- Password hashing behavior (no plaintext, salted, 72-byte UTF-8 bound)
+- Real-database tenant-isolation matrix (IDOR/BOLA)
+- Stale/deleted membership and inconsistent JWT-claim rejection
+- Existing-data migration preservation and bootstrap-tenant isolation
+- DTO validation boundaries and route-identifier (cuid) validation
+- `/api/v1` routing, the auth guard, and unversioned `/health` and `/status`
+- Unknown-field / mass-assignment rejection and the stable error contract
 - No internal error-detail leakage on failure paths
 
 ## Known Planned Work
 
 Upcoming development work includes:
 
-- Real database integration tests
+- Spatial evaluation and point-in-geofence logic
 - Alert domain planning
 - Location event workflow planning
 - Request and response examples for API documentation
@@ -86,9 +94,12 @@ Upcoming development work includes:
 | Pagination | Complete |
 | Status filtering | Complete |
 | Summary endpoint | Complete |
-| Unit testing | In Progress |
+| Unit testing | Complete |
+| Authentication (GF-2) | Complete |
+| Tenant isolation (GF-2) | Complete |
 | Alert workflow | Planned |
 | Location events | Planned |
+| Spatial evaluation | Planned |
 | Documentation polish | In Progress |
 | Portfolio polish | Planned |
 

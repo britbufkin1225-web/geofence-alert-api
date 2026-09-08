@@ -2,12 +2,14 @@
 
 A backend API for managing geofence records, built with NestJS and Prisma.
 
-> **Implementation status:** This repository is an early-stage CRUD baseline.
-> It currently implements geofence create/read/update/delete with request
-> validation, pagination, filtering, and a summary endpoint, backed by
-> **SQLite** via Prisma. Location-event ingestion, spatial evaluation, alerting,
-> authentication, and PostgreSQL/PostGIS are **planned roadmap items and are not
-> implemented**. See [Currently Implemented vs Planned](#currently-implemented-vs-planned).
+> **Implementation status:** This repository is an authenticated, multi-tenant
+> CRUD baseline. It implements user identity, password authentication (bcrypt),
+> Bearer/JWT sessions, per-tenant ownership of geofences with strict cross-tenant
+> isolation, and geofence create/read/update/delete with request validation,
+> pagination, filtering, and a summary endpoint, backed by **SQLite** via Prisma.
+> Location-event ingestion, spatial evaluation, alerting, and PostgreSQL/PostGIS
+> are **planned roadmap items and are not implemented**. See
+> [Currently Implemented vs Planned](#currently-implemented-vs-planned).
 
 ## Project Summary
 
@@ -25,21 +27,27 @@ the codebase provides the geofence-management foundation for that vision.
 
 - NestJS application with a `/api/v1` route prefix
 - Unversioned `/health` and `/status` operational endpoints
+- User identity with bcrypt password hashing
+- Bearer/JWT authentication (`register`, `login`, `me`) with a fail-closed
+  signing-secret requirement
+- Explicit User ↔ Tenant membership model
+- Per-tenant ownership of geofences with server-derived tenant context
+- Strict cross-tenant isolation (IDOR/BOLA mitigation), verified against a real
+  SQLite database
 - Geofence CRUD (create, list, get-by-id, update, delete) via Prisma + SQLite
 - DTO-based request validation with bounded, deterministic limits
 - Pagination and name/active filtering for the list endpoint
 - Geofence summary (counts and radius aggregates)
 - A consistent, non-leaky JSON error contract
-- Unit and HTTP-level regression tests (no external database required)
+- Unit, HTTP-level, and real-database integration tests
 
 **Planned but not yet implemented:**
 
-- Authentication and authorization
-- Users, tenants, or ownership isolation
 - PostgreSQL / PostGIS
 - Location-event ingestion and history
 - Spatial containment, enter/exit/dwell evaluation
 - Alert creation and dispatch
+- Refresh tokens, password reset, MFA, RBAC, rate limiting, account lockout
 - Production deployment readiness
 - Location-data retention / deletion controls
 
@@ -53,21 +61,23 @@ This project demonstrates how a backend system can organize geofence data, recei
 
 **Implemented:**
 
+- Bearer/JWT authentication (`/api/v1/auth/register`, `login`, `me`)
+- User identity, tenants, and membership with tenant-owned geofences
+- Strict cross-tenant isolation on every geofence operation
 - REST API for geofence management (`/api/v1/geofences`)
 - Health and status endpoints (`/health`, `/status`)
-- Environment-based configuration
-- SQLite-backed geofence records via Prisma
+- Environment-based configuration with fail-closed auth secret validation
+- SQLite-backed records via Prisma
 - DTO-based request validation with bounded limits
 - Query-based pagination and filtering (active status, name search, sorting)
 - Geofence summary reporting
-- Unit- and HTTP-tested geofence behavior
+- Unit-, HTTP-, and integration-tested behavior
 - Stable, non-leaky JSON error contract
 
 **Planned:**
 
 - Location event tracking
 - Alert workflow support
-- Authentication and user-owned resources
 - PostgreSQL / PostGIS spatial features
 
 ## Tech Stack
@@ -111,20 +121,33 @@ Detailed endpoint documentation is available in [API Documentation](docs/api.md)
 Application API routes are served under the `/api/v1` prefix. The `/health` and
 `/status` operational endpoints are intentionally left unversioned at the root.
 
+**Authentication:** all routes are authenticated by default. Public routes are
+`/health`, `/status`, the `/api/v1` root banner, and the two auth entry points
+(`register`, `login`). Every other route requires an
+`Authorization: Bearer <token>` header. The tenant context is derived from the
+verified token — never from the request body, query, params, or a client header.
+
 Current implemented endpoints:
 
-| Method | Endpoint | Purpose | Status |
-| --- | --- | --- | --- |
-| GET | `/health` | Liveness check (unversioned) | Complete |
-| GET | `/status` | Service metadata (unversioned) | Complete |
-| GET | `/api/v1` | Root greeting string | Complete |
-| GET | `/api/v1/db/status` | Database connectivity check | Complete |
-| POST | `/api/v1/geofences` | Create a geofence | Complete |
-| GET | `/api/v1/geofences` | List geofences with pagination and filtering | Complete |
-| GET | `/api/v1/geofences/summary` | Return aggregate geofence summary counts | Complete |
-| GET | `/api/v1/geofences/:id` | Retrieve a geofence by ID | Complete |
-| PATCH | `/api/v1/geofences/:id` | Update a geofence by ID | Complete |
-| DELETE | `/api/v1/geofences/:id` | Delete a geofence by ID | Complete |
+| Method | Endpoint | Purpose | Auth | Status |
+| --- | --- | --- | --- | --- |
+| GET | `/health` | Liveness check (unversioned) | Public | Complete |
+| GET | `/status` | Service metadata (unversioned) | Public | Complete |
+| GET | `/api/v1` | Root greeting string | Public | Complete |
+| POST | `/api/v1/auth/register` | Create a user + tenant, return a token | Public | Complete |
+| POST | `/api/v1/auth/login` | Authenticate, return a token | Public | Complete |
+| GET | `/api/v1/auth/me` | Return the authenticated identity | Bearer | Complete |
+| GET | `/api/v1/db/status` | Database connectivity check | Bearer | Complete |
+| POST | `/api/v1/geofences` | Create a geofence (owned by caller's tenant) | Bearer | Complete |
+| GET | `/api/v1/geofences` | List the caller tenant's geofences | Bearer | Complete |
+| GET | `/api/v1/geofences/summary` | Aggregate summary for the caller's tenant | Bearer | Complete |
+| GET | `/api/v1/geofences/:id` | Retrieve a geofence by ID (own tenant only) | Bearer | Complete |
+| PATCH | `/api/v1/geofences/:id` | Update a geofence by ID (own tenant only) | Bearer | Complete |
+| DELETE | `/api/v1/geofences/:id` | Delete a geofence by ID (own tenant only) | Bearer | Complete |
+
+A geofence that exists but belongs to another tenant is reported as `404 Not
+Found` — the API does not confirm the existence of resources outside the
+caller's tenant.
 
 Planned future endpoints (not implemented):
 
@@ -160,7 +183,17 @@ rejected):
 | `radiusMeters` | Number in `1`…`5000` meters (inclusive) |
 | Route `:id` | Must be a valid cuid; malformed ids return `400` |
 
+Auth request bodies are validated with these bounds:
+
+| Field | Rule |
+| --- | --- |
+| `email` | Required, structurally valid email, canonicalized (trimmed + lowercased), max 254 characters, unique |
+| `password` | Required string, 8–72 characters and at most 72 UTF-8 bytes, **never trimmed or transformed**, never returned or logged |
+| `tenantName` | Required string, trimmed, 1–120 characters, not blank |
+
 Update requests reject empty bodies and bodies containing only unknown fields.
+Ownership fields such as `tenantId` are never accepted on create or update — they
+are rejected as unknown properties.
 
 ### Error Contract
 
@@ -179,23 +212,27 @@ internals, SQL, or filesystem paths:
 
 ## Database Design
 
-The current Prisma schema (SQLite) defines two models with string `cuid`
+The current Prisma schema (SQLite) defines these models with string `cuid`
 primary keys:
 
 | Entity | Status | Purpose |
 | --- | --- | --- |
-| Geofence | Implemented | Named circular geofence areas (lat/long/radius, active flag) |
+| User | Implemented | Login identity (unique email) and bcrypt password hash |
+| Tenant | Implemented | Unit of data ownership and isolation |
+| Membership | Implemented | Explicit User ↔ Tenant relationship (unique per pair) |
+| Geofence | Implemented | Named circular geofence areas, owned by exactly one tenant |
 | AlertEvent | Defined (schema only) | Alert records related to a geofence; no runtime logic yet |
+
+Every geofence carries a required `tenantId` foreign key. Ownership is set
+server-side from the authenticated principal and cannot be supplied or changed by
+a client.
 
 Planned future entities (not in the schema):
 
 | Entity | Purpose |
 | --- | --- |
-| User | Account ownership and isolation |
 | Tracked Device | Device or location source details |
 | Location Event | Submitted latitude/longitude events |
-
-There is no `users` table and no ownership relationship in the current schema.
 
 Detailed schema documentation is available in [Database Schema](docs/database-schema.md).
 
@@ -222,15 +259,23 @@ This workflow shows the full development process from planning through implement
 
 ## Security Considerations
 
-Planned security practices include:
+See [docs/security.md](docs/security.md) for the full security architecture note.
 
-- No committed secrets
-- Environment-based configuration
-- Input validation
-- Clear error handling
-- Safe database configuration
-- API request validation
-- Security documentation through `SECURITY.md`
+Implemented security practices (enforced in code and regression-tested):
+
+- Bcrypt password hashing; plaintext passwords are never stored, returned, or logged
+- Bearer/JWT auth with pinned `HS256`, required expiry, and signature verification
+- No insecure fallback secret; startup fails closed when `JWT_SECRET` is absent
+- Server-derived tenant context and tenant-scoped database queries (IDOR/BOLA mitigation)
+- Cross-tenant resources reported as `404` (no existence disclosure)
+- Mass-assignment protection: ownership fields cannot be set or reassigned by clients
+- Generic authentication failures that avoid user enumeration
+- Input validation with bounded, deterministic limits
+- A non-leaky JSON error contract (no stack traces, SQL, Prisma internals, or paths)
+- No committed secrets; environment-based configuration
+
+Planned/deferred controls: refresh-token rotation, password reset, MFA, RBAC,
+rate limiting, and account lockout.
 
 ## Local Development
 
@@ -247,6 +292,11 @@ npm run start:dev
 The application uses a local SQLite database file (`DATABASE_URL="file:./dev.db"`
 by default). Real `.env` files should not be committed.
 
+Authentication requires a signing secret. Set `JWT_SECRET` (minimum 32
+characters) in your `.env`; the application **fails to start** without it. Never
+commit a real secret — `.env.example` ships a placeholder only. Optionally set
+`JWT_EXPIRES_IN` (default `1h`).
+
 Common scripts:
 
 ```bash
@@ -259,32 +309,36 @@ npm run lint:fix   # lint with autofix
 ## Testing
 Detailed testing notes are available in [Testing Documentation](docs/testing.md).
 
-This project uses Jest for unit tests and Supertest for HTTP-level tests. The
-HTTP tests boot a real Nest application with a mocked Prisma layer, so **no
-database is required to run the suite**.
+This project uses Jest for unit tests and Supertest for HTTP-level tests. Most
+tests boot a real Nest application with a mocked Prisma layer (no database
+required). Tenant isolation is additionally proven by a **real database
+integration test** that provisions an isolated, temporary SQLite database, applies
+the project's actual migrations, and drives the API end-to-end before cleaning
+itself up — it never touches your `dev.db`.
 
 Current test coverage includes:
 
-- Geofence service CRUD and summary behavior
-- Controller route behavior and not-found handling
-- DTO validation boundaries (name, coordinates, radius, pagination, search)
-- Route-identifier (cuid) validation
-- `/api/v1` routing and unversioned `/health` and `/status`
-- Unknown-field rejection and the stable error contract
+- Geofence service/controller CRUD, summary, and tenant scoping
+- Registration and login validation matrix (email, password, tenant name bounds)
+- Token handling (missing, malformed, altered, expired, `alg: none`)
+- Password hashing (no plaintext, per-hash salt, bcrypt 72-byte bound)
+- Tenant-isolation matrix against a real SQLite database (IDOR/BOLA)
+- DTO validation boundaries and route-identifier (cuid) validation
+- `/api/v1` routing, the auth guard, and unversioned `/health` and `/status`
+- Unknown-field / mass-assignment rejection and the stable error contract
 - No internal error-detail leakage on failure paths
 
 Current verified test state:
 
 ```text
-Test Suites: 7 passed
-Tests: 73 passed
+Test Suites: 10 passed
+Tests: 116 passed
 ```
 
 Additional planned testing includes:
 
 - Alert workflow behavior
 - Location-event processing
-- Real database integration tests
 
 ## Roadmap
 
@@ -297,8 +351,10 @@ Additional planned testing includes:
 | Phase 5 | DTO validation | Complete |
 | Phase 6 | Pagination and filtering | Complete |
 | Phase 7 | Geofence summary endpoint | Complete |
-| Phase 8 | Unit testing foundation | In Progress |
-| Phase 9 | Alert workflow | Planned |
+| Phase 8 | Unit testing foundation | Complete |
+| GF-1 | Defensive validation baseline hardening | Complete |
+| GF-2 | Identity, authentication + tenant isolation | Complete |
+| GF-3+ | Spatial evaluation, location events, alerts | Planned |
 | Phase 10 | Documentation polish | In Progress |
 | Phase 11 | Portfolio polish | Planned |
 
