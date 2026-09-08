@@ -66,8 +66,9 @@ The backend currently supports:
 Current verified test status:
 
 ```text
-Unit + HTTP     Test Suites: 9 passed    Tests: 96 passed
-Integration     Test Suites: 4 passed    Tests: 79 passed
+Unit + HTTP     Test Suites: 10 passed   Tests: 121 passed
+Integration     Test Suites: 4 passed    Tests: 85 passed
+E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
 The unit/HTTP suite (`npm test`) boots a real Nest application with a mocked

@@ -37,8 +37,9 @@ iterating after `npm run test:db -- --keep`.
 ## Current Verified Test State
 
 ```text
-Unit + HTTP     Test Suites: 9 passed    Tests: 96 passed
-Integration     Test Suites: 4 passed    Tests: 79 passed
+Unit + HTTP     Test Suites: 10 passed   Tests: 121 passed
+Integration     Test Suites: 4 passed    Tests: 85 passed
+E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
 ## Test Architecture
@@ -78,11 +79,23 @@ from developer data on several levels:
 | Host port | `5432` | `127.0.0.1:55433` |
 | Storage | named volume `geofence_postgres_data` | `tmpfs` (RAM) |
 
-`test/integration/support/database.ts` refuses to run if `DATABASE_URL` does not
-name the `geofence_gf3_disposable` database, so pointing the suite at a real
-database fails with an explanatory error instead of wiping it. Teardown is a
-plain `docker compose down` — never `-v` — and there is no volume to delete
-because the test database lives in RAM.
+The guard requires the exact URL (scheme, fixture credentials, loopback address,
+high port, database and sole schema parameter) before any connection. It then
+inspects the local `desktop-linux` Docker context and requires the expected
+container, project/service labels, image, credentials, port mapping, PGDATA,
+tmpfs backing and health. The runner applies the same proof before migration and
+checks project container identity before cleanup. Remote contexts, persistent
+mounts, alternate URL encodings and query overrides fail closed. Teardown uses
+plain `docker compose down` without orphan or volume removal.
+
+The current runner targets Windows Docker Desktop (local named-pipe context).
+`TEST_DB_PORT` may be a canonical port from 49152 through 65535; the runner
+passes its resolved value to Compose so a local .env cannot silently override it.
+
+There is no committed CI workflow. Required pre-push validation is:
+`npm run lint`, `npm run build`, `npm test -- --runInBand`,
+`npm run test:e2e`, and `npm run test:db`. A future CI workflow must invoke
+all layers; `npm test` alone does not validate tenant isolation on PostgreSQL.
 
 > Terminology note: the mocked HTTP tests are **not** database integration
 > tests. Only the files under `test/integration/` run against a real database.

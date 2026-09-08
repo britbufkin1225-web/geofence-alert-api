@@ -114,6 +114,16 @@ describe('GF-3 database constraints (disposable PostgreSQL/PostGIS)', () => {
   });
 
   describe('radius', () => {
+    it('rejects a fractional radius below the API minimum', async () => {
+      await expect(
+        insertGeofence({ id: 'radius-fraction', radiusMeters: 0.5 }),
+      ).rejects.toThrow(/Geofence_radiusMeters_positive_check/);
+    });
+    it('accepts the one metre minimum', async () => {
+      await expect(
+        insertGeofence({ id: 'radius-min', radiusMeters: 1 }),
+      ).resolves.toBe(1);
+    });
     it('rejects a zero radius', async () => {
       await expect(
         insertGeofence({ id: 'radius-zero', radiusMeters: 0 }),
@@ -167,6 +177,22 @@ describe('GF-3 database constraints (disposable PostgreSQL/PostGIS)', () => {
   });
 
   describe('required names', () => {
+    it.each(['\t\n', '\u00a0\ufeff'])(
+      'rejects JavaScript whitespace-only names %s',
+      async (name) => {
+        await expect(
+          insertGeofence({ id: 'blank-unicode', name }),
+        ).rejects.toThrow(/Geofence_name_not_blank_check/);
+        await expect(prisma.tenant.create({ data: { name } })).rejects.toThrow(
+          /Tenant_name_not_blank_check/,
+        );
+        await expect(
+          prisma.user.create({
+            data: { email: name + 'a@example.com', passwordHash: 'x' },
+          }),
+        ).rejects.toThrow(/User_email_not_blank_check/);
+      },
+    );
     it('rejects a blank geofence name', async () => {
       await expect(
         insertGeofence({ id: 'blank-name', name: '   ' }),

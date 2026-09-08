@@ -43,6 +43,7 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
         '20260908102300_enable_postgis',
         '20260908102319_init_postgresql_baseline',
         '20260908102400_geofence_spatial_constraints',
+        '20260908110000_audit_contract_hardening',
       ]);
       expect(rows.every((row) => row.finished)).toBe(true);
       expect(rows.some((row) => row.rolled_back)).toBe(false);
@@ -133,9 +134,15 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
   describe('spatial index', () => {
     it('has a GiST index on the geography column', async () => {
       const rows = await prisma.$queryRaw<
-        Array<{ index_name: string; method: string; definition: string }>
+        Array<{
+          index_name: string;
+          method: string;
+          definition: string;
+          indisvalid: boolean;
+          indisready: boolean;
+        }>
       >`
-        SELECT i.relname AS index_name,
+        SELECT i.relname AS index_name, x.indisvalid, x.indisready,
                am.amname AS method,
                pg_get_indexdef(x.indexrelid) AS definition
         FROM pg_index x
@@ -147,6 +154,8 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
 
       expect(rows).toHaveLength(1);
       expect(rows[0].method).toBe('gist');
+      expect(rows[0].indisvalid).toBe(true);
+      expect(rows[0].indisready).toBe(true);
       // Targets the intended column, not some other one.
       expect(rows[0].definition).toContain('"centerPoint"');
     });

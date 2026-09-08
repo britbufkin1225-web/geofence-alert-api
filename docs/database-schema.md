@@ -64,7 +64,7 @@ the explicit link that authorizes a user to act within a tenant.
 | `description` | `varchar(1000)` | Optional |
 | `latitude` | `double precision` | Centre latitude, −90…90 |
 | `longitude` | `double precision` | Centre longitude, −180…180 |
-| `radiusMeters` | `double precision` | Radius in metres, > 0 and ≤ 5000 |
+| `radiusMeters` | `double precision` | Radius in metres, ≥ 1 and ≤ 5000 |
 | `isActive` | `boolean` | Defaults to `true` |
 | `centerPoint` | `geography(Point, 4326)` | **Generated** — see below. Not readable or writable through Prisma Client |
 | `createdAt` / `updatedAt` | `timestamp(3)` | Timestamps |
@@ -142,19 +142,41 @@ Prisma has no PostGIS type, so the field is declared
   so Prisma knows it exists and will not try to drop it.
 
 **Known, expected drift.** `prisma migrate diff` reports exactly one difference
-between the datamodel and a fully migrated database:
+from the datamodel to a fully migrated database (`--from-schema prisma/schema.prisma --to-config-datasource --script`):
 
 ```sql
 ALTER TABLE "public"."Geofence" ALTER COLUMN "centerPoint" SET NOT NULL,
 ALTER COLUMN "centerPoint" SET DEFAULT (st_setsrid(st_makepoint(longitude, latitude), 4326))::geography;
 ```
 
-Prisma cannot express `GENERATED ALWAYS AS ... STORED` and renders it as a
-column default. This is a reporting artifact, not a schema defect. The practical
-consequence: generate future migrations with
-`prisma migrate dev --create-only` and **delete that statement** before applying
-them. Any migration touching the spatial column, the CHECK constraints, or the
-GiST index must be hand-authored.
+Prisma 7.8.0 reports the generated expression as a default. The opposite comparison
+(`--from-config-datasource --to-schema prisma/schema.prisma --script`), which
+is relevant when generating a migration toward the datamodel, produces:
+
+```sql
+-- AlterTable
+ALTER TABLE "Geofence" ALTER COLUMN "centerPoint" DROP NOT NULL,
+ALTER COLUMN "centerPoint" DROP DEFAULT;
+```
+
+Do not apply either artifact. Generate future migrations with
+`prisma migrate dev --create-only` on a disposable development database,
+review the complete SQL, and remove only the operations above when they refer
+to this generated column. Never discard a whole statement if it also contains
+an intended change. Review CHECK constraints and generated expressions separately:
+Prisma diff does not fully model them. `npm run test:db` asserts the exact
+known datamodel-to-database SQL and fails on any additional modeled drift.
+
+A required Unsupported field with `@default(dbgenerated())` still reports the
+expression difference. Supplying the expression as a fake default hides the
+drift, but PostgreSQL rejects the resulting DDL (column references cannot appear
+in defaults). Retain the truthful optional Unsupported declaration and the
+stored generated column. GiST is supported by Prisma and is already declared;
+only generated-column and CHECK-constraint changes require manual SQL.
+
+The synchronization guarantee covers normal writes. A database owner capable
+of altering the table can change either a generated column or a trigger; neither
+mechanism protects against hostile schema owners.
 
 ## Database-enforced constraints
 
@@ -166,9 +188,9 @@ data written outside the NestJS validation pipe is still bounded.
 | --- | --- |
 | `Geofence_latitude_range_check` | `latitude` between −90 and 90 |
 | `Geofence_longitude_range_check` | `longitude` between −180 and 180 |
-| `Geofence_radiusMeters_positive_check` | `radiusMeters > 0` |
+| `Geofence_radiusMeters_positive_check` | `radiusMeters >= 1` |
 | `Geofence_radiusMeters_max_check` | `radiusMeters <= 5000` |
-| `Geofence_name_not_blank_check` | `btrim(name)` is not empty |
+| `Geofence_name_not_blank_check` | ECMAScript-whitespace-trimmed name is not empty |
 | `Tenant_name_not_blank_check` | `btrim(name)` is not empty |
 | `User_email_not_blank_check` | non-blank, no surrounding whitespace |
 | `AlertEvent_latitude_range_check` | null, or between −90 and 90 |
@@ -176,13 +198,11 @@ data written outside the NestJS validation pipe is still bounded.
 
 Deliberate decisions:
 
-- The radius floor is `> 0` — the geometric invariant — rather than the API's
-  1 metre minimum, which is product policy that may be retuned without a
-  migration. The ceiling mirrors `GEOFENCE_RADIUS_MAX_METERS` (5000).
+- The radius floor is 1 metre and the ceiling is 5000 metres, matching the DTO. Both are contract constraints and require a migration when changed.
 - The lowercase half of email canonicalization is **not** asserted in SQL:
   PostgreSQL's `lower()` is locale-dependent and does not always agree with
   JavaScript's `toLowerCase()`, so such a CHECK could reject addresses the API
-  legitimately accepts. Trimming and non-emptiness are asserted.
+  legitimately accepts. Trimming and non-emptiness use the explicit ECMAScript whitespace set in the audit migration. SQL does not enforce full email syntax or lowercase normalization; application writers must normalize email before persisting it.
 - `AlertEvent` string columns carry no length bound, because no endpoint reads or
   writes them yet and there is no contract to align with. Bounds arrive with the
   alert workflow.
@@ -194,6 +214,7 @@ Deliberate decisions:
 | `20260908102300_enable_postgis` | `CREATE EXTENSION IF NOT EXISTS postgis` |
 | `20260908102319_init_postgresql_baseline` | Prisma-generated tables, enums, foreign keys, indexes |
 | `20260908102400_geofence_spatial_constraints` | Generated spatial column, GiST index, CHECK constraints |
+| `20260908110000_audit_contract_hardening` | One-metre radius minimum and ECMAScript whitespace checks |
 
 Deploy them with:
 

@@ -24,6 +24,15 @@
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import identity from './disposable-db-identity.js';
+const {
+  disposableUrl,
+  verifyDisposableDatabase,
+  verifyLocalDocker,
+  validateContainer,
+  docker,
+  CONTEXT,
+} = identity;
 
 const projectRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -36,9 +45,7 @@ const SERVICE = 'postgis-test';
 const CONTAINER = 'geofence-gf3-disposable-postgis';
 const PORT = process.env.TEST_DB_PORT ?? '55433';
 
-const DATABASE_URL =
-  `postgresql://geofence_test:geofence_test_only_not_a_secret` +
-  `@127.0.0.1:${PORT}/geofence_gf3_disposable?schema=public`;
+const DATABASE_URL = disposableUrl(PORT);
 
 const keepRunning = process.argv.includes('--keep');
 
@@ -48,7 +55,7 @@ function run(command, args, { env, capture = false } = {}) {
     stdio: capture ? 'pipe' : 'inherit',
     encoding: 'utf8',
     shell: process.platform === 'win32',
-    env: { ...process.env, ...env },
+    env: { ...process.env, TEST_DB_PORT: PORT, ...env },
   });
   return result;
 }
@@ -56,7 +63,16 @@ function run(command, args, { env, capture = false } = {}) {
 function compose(args, options) {
   return run(
     'docker',
-    ['compose', '-p', COMPOSE_PROJECT, '-f', COMPOSE_FILE, ...args],
+    [
+      '--context',
+      CONTEXT,
+      'compose',
+      '-p',
+      COMPOSE_PROJECT,
+      '-f',
+      COMPOSE_FILE,
+      ...args,
+    ],
     options,
   );
 }
@@ -71,6 +87,27 @@ function fail(message) {
   process.exit(1);
 }
 
+function safeDown() {
+  verifyLocalDocker();
+  // Inspect every project container before any teardown; never remove orphans.
+  const ids = docker([
+    'ps',
+    '-aq',
+    '--filter',
+    'label=com.docker.compose.project=' + COMPOSE_PROJECT,
+  ])
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const id of ids) {
+    const [container] = JSON.parse(docker(['inspect', id]));
+    validateContainer(container, false);
+  }
+  if (compose(['down']).status !== 0) {
+    throw new Error('Disposable cleanup failed; inspect the test stack.');
+  }
+}
+
 let tornDown = false;
 function teardown() {
   if (tornDown || keepRunning) {
@@ -79,7 +116,7 @@ function teardown() {
   tornDown = true;
   step('Cleanup (disposable stack only)');
   // No `-v`: the test database is tmpfs-backed and owns no volume.
-  compose(['down', '--remove-orphans']);
+  safeDown();
 }
 
 function waitForHealthy(timeoutMs = 120_000) {
@@ -87,7 +124,14 @@ function waitForHealthy(timeoutMs = 120_000) {
   while (Date.now() < deadline) {
     const inspect = run(
       'docker',
-      ['inspect', '-f', '{{.State.Health.Status}}', CONTAINER],
+      [
+        '--context',
+        CONTEXT,
+        'inspect',
+        '-f',
+        '{{.State.Health.Status}}',
+        CONTAINER,
+      ],
       { capture: true },
     );
     const status = (inspect.stdout ?? '').trim();
@@ -109,8 +153,13 @@ process.on('SIGINT', () => {
 });
 
 step('Preflight: docker daemon');
-if (run('docker', ['info', '--format', '{{.ServerVersion}}'], { capture: true })
-  .status !== 0) {
+if (
+  run(
+    'docker',
+    ['--context', CONTEXT, 'info', '--format', '{{.ServerVersion}}'],
+    { capture: true },
+  ).status !== 0
+) {
   console.error('Docker daemon is not reachable. Start Docker and retry.');
   process.exit(1);
 }
@@ -118,7 +167,7 @@ if (run('docker', ['info', '--format', '{{.ServerVersion}}'], { capture: true })
 step(`Start disposable PostGIS stack (project ${COMPOSE_PROJECT})`);
 // Recreate from scratch so a stale container from a previous run cannot make a
 // migration appear to succeed against already-migrated state.
-compose(['down', '--remove-orphans']);
+safeDown();
 if (compose(['up', '-d', '--force-recreate', SERVICE]).status !== 0) {
   fail('could not start the disposable PostGIS container');
 }
@@ -130,6 +179,8 @@ if (!waitForHealthy()) {
 }
 console.log(`${CONTAINER} is healthy on 127.0.0.1:${PORT}`);
 
+verifyDisposableDatabase(DATABASE_URL);
+
 step('Deploy committed migrations');
 if (
   run('npx', ['prisma', 'migrate', 'deploy'], { env: { DATABASE_URL } })
@@ -139,9 +190,38 @@ if (
 }
 
 step('Generate Prisma Client');
-if (run('npx', ['prisma', 'generate'], { env: { DATABASE_URL } }).status !== 0) {
+if (
+  run('npx', ['prisma', 'generate'], { env: { DATABASE_URL } }).status !== 0
+) {
   fail('prisma generate failed');
 }
+
+step('Verify the exact known Prisma drift');
+const drift = run(
+  'npx',
+  [
+    'prisma',
+    'migrate',
+    'diff',
+    '--from-schema',
+    'prisma/schema.prisma',
+    '--to-config-datasource',
+    '--script',
+  ],
+  { env: { DATABASE_URL }, capture: true },
+);
+const expectedDrift =
+  '-- AlterTable\nALTER TABLE "public"."Geofence" ALTER COLUMN "centerPoint" SET NOT NULL,\nALTER COLUMN "centerPoint" SET DEFAULT (st_setsrid(st_makepoint(longitude, latitude), 4326))::geography;';
+if (
+  drift.status !== 0 ||
+  (drift.stdout ?? '').replace(/\r\n/g, '\n').trim() !== expectedDrift
+) {
+  console.error(drift.stdout, drift.stderr);
+  fail(
+    'unexpected Prisma drift; review the complete diff, never blanket-ignore it',
+  );
+}
+console.log(drift.stdout.trim());
 
 step('Run integration suite against the disposable database');
 const tests = run(

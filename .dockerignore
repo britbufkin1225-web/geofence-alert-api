@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.snapshots
+tmp
+temp
+coverage

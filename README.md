@@ -325,8 +325,8 @@ npm run start:dev
 ```
 
 The application requires **PostgreSQL with PostGIS**; `npm run db:up` starts the
-pinned `postgis/postgis:16-3.4` image from `docker-compose.yml` and waits behind
-a health check. `DATABASE_URL` must be a `postgresql://` connection string — the
+pinned `postgis/postgis:16-3.4` image from `docker-compose.yml` with a health check. The API service waits for
+that check when started through Compose. `DATABASE_URL` must be a `postgresql://` connection string — the
 application **fails to start** without one, and there is no SQLite fallback.
 Real `.env` files should not be committed.
 
@@ -390,8 +390,9 @@ Current test coverage includes:
 Current verified test state:
 
 ```text
-Unit + HTTP     Test Suites: 9 passed    Tests: 96 passed
-Integration     Test Suites: 4 passed    Tests: 79 passed
+Unit + HTTP     Test Suites: 10 passed   Tests: 121 passed
+Integration     Test Suites: 4 passed    Tests: 85 passed
+E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
 Additional planned testing includes:

@@ -115,7 +115,10 @@ describe('GF-3 scalar/spatial synchronization (disposable PostgreSQL/PostGIS)', 
         where: { id: created.id },
         data: { latitude: 11 },
       });
-      expect((await readPoint(created.id)).srid).toBe(4326);
+      const point = await readPoint(created.id);
+      expect(point.srid).toBe(4326);
+      expect(point.x).toBe(10);
+      expect(point.y).toBe(11);
     });
 
     it('updates the point when only one coordinate changes', async () => {
@@ -132,6 +135,16 @@ describe('GF-3 scalar/spatial synchronization (disposable PostgreSQL/PostGIS)', 
   });
 
   describe('the two representations cannot diverge', () => {
+    it('rejects null scalar coordinates without changing the persisted point', async () => {
+      const created = await createGeofence('Null target', 10, 20);
+      await expect(
+        prisma.$executeRaw`UPDATE "Geofence" SET latitude = NULL WHERE id = ${created.id}`,
+      ).rejects.toThrow(/null|not-null/i);
+      await expect(
+        prisma.$executeRaw`UPDATE "Geofence" SET longitude = NULL WHERE id = ${created.id}`,
+      ).rejects.toThrow(/null|not-null/i);
+      expect(await readPoint(created.id)).toMatchObject({ x: 20, y: 10 });
+    });
     it('refuses a direct UPDATE of the geography column', async () => {
       const created = await createGeofence('Tamper target', 10, 20);
 

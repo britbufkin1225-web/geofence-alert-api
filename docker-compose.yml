@@ -44,7 +44,10 @@ services:
     environment:
       # Overrides the host-facing DATABASE_URL from .env: inside the Compose
       # network the database is reachable as `postgres:5432`, not localhost.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-geofence}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-geofence}?schema=public
+      # start-compose.mjs URL-encodes raw credentials before starting the API.
+      POSTGRES_USER: ${POSTGRES_USER:-geofence}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (see .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-geofence}
     ports:
       - "${PORT:-3000}:3000"
     depends_on:
@@ -54,7 +57,7 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
-    command: npm run start:dev
+    command: node scripts/start-compose.mjs
 
 volumes:
   geofence_postgres_data:

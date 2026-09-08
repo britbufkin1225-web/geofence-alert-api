@@ -166,6 +166,35 @@ describe('Tenant isolation (real PostgreSQL/PostGIS integration)', () => {
     });
   });
 
+  it('supports same-tenant PATCH, active filtering and DELETE', async () => {
+    const created = await request(server)
+      .post('/api/v1/geofences')
+      .set('Authorization', auth(tokenA))
+      .send(validGeofence('CRUD audit'))
+      .expect(201);
+    const id = (created.body as { id: string }).id;
+    await request(server)
+      .patch('/api/v1/geofences/' + id)
+      .set('Authorization', auth(tokenA))
+      .send({ latitude: 12, isActive: false })
+      .expect(200);
+    const filtered = await request(server)
+      .get('/api/v1/geofences?active=false')
+      .set('Authorization', auth(tokenA))
+      .expect(200);
+    expect(
+      (filtered.body as { data: Array<{ id: string; tenantId: string }> }).data,
+    ).toEqual([expect.objectContaining({ id, tenantId: tenantAId })]);
+    await request(server)
+      .delete('/api/v1/geofences/' + id)
+      .set('Authorization', auth(tokenA))
+      .expect(200);
+    await request(server)
+      .get('/api/v1/geofences/' + id)
+      .set('Authorization', auth(tokenA))
+      .expect(404);
+  });
+
   describe('listing', () => {
     it('A lists only A data', async () => {
       const res = await request(server)
