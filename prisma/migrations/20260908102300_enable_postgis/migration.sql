@@ -1,0 +1,29 @@
+-- GF-3, step 1 of 3: enable PostGIS.
+--
+-- MIGRATION HISTORY RESET
+-- -----------------------
+-- The two migrations that preceded this one (`init` and
+-- `add_identity_tenant_ownership`) were authored in SQLite dialect: they used
+-- REAL/DATETIME column types and the `PRAGMA ... / CREATE TABLE "new_Geofence"`
+-- table-rebuild idiom, none of which PostgreSQL can execute. They were removed
+-- rather than rewritten in place, because editing committed migrations to make
+-- them appear PostgreSQL-native would have falsified the recorded history.
+--
+-- This reset is safe and narrow for this repository specifically:
+--   * the project is pre-production (v0.1.0) and has never been deployed;
+--   * the only databases that ever ran the SQLite migrations were local
+--     developer `dev.db` files and per-test temporary files;
+--   * no environment exists whose `_prisma_migrations` table needs to reconcile
+--     with the old entries.
+--
+-- Existing local SQLite data is NOT migrated. A developer with a `dev.db` worth
+-- keeping must export it themselves; see docs/database-schema.md. Because there
+-- is no pre-existing data to backfill, the GF-2 "legacy bootstrap tenant" is no
+-- longer needed and is intentionally not recreated here.
+--
+-- This migration must run first: the baseline migration creates a
+-- `geography(Point, 4326)` column, and that type does not exist until PostGIS is
+-- installed. `IF NOT EXISTS` keeps re-deployment idempotent on an image that
+-- already ships the extension enabled.
+
+CREATE EXTENSION IF NOT EXISTS postgis;

@@ -17,11 +17,23 @@ The project uses two main environment files during local development:
 
 The **Consumed by code** column reflects what the current application actually
 reads. Variables marked "No" are documented for the planned roadmap but are not
-yet referenced anywhere in the codebase.
+yet referenced anywhere in the codebase. "Compose only" means the variable
+configures the local database container in `docker-compose.yml` rather than the
+Node process — the application itself only ever reads `DATABASE_URL`, so keep
+the two consistent.
+
+The disposable integration-test database does **not** read any of these: it
+builds its own connection string from `docker-compose.test.yml`. See
+[testing.md](testing.md).
 
 | Variable | Example Value | Consumed by code | Description |
 | --- | --- | --- | --- |
-| `DATABASE_URL` | `file:./dev.db` | Yes | SQLite connection string used by the Prisma service. Falls back to `file:./dev.db` if unset. |
+| `DATABASE_URL` | `postgresql://geofence:...@localhost:5432/geofence?schema=public` | Yes (**required**) | PostgreSQL connection string. Read by the Prisma driver adapter at runtime and by `prisma.config.ts` for the Prisma CLI. Validated at startup: it must be present and use the `postgresql://` or `postgres://` scheme. There is **no** default and no SQLite fallback — the application fails closed if it is missing or malformed. |
+| `POSTGRES_USER` | `geofence` | Compose only | Database role created by the local `docker compose` database. Defaults to `geofence`. |
+| `POSTGRES_PASSWORD` | `replace-with-a-local-development-password` | Compose only (**required**) | Password for that role. Deliberately has **no** default, so the local stack cannot start on a well-known password. |
+| `POSTGRES_DB` | `geofence` | Compose only | Database name created by the local stack. Defaults to `geofence`. |
+| `POSTGRES_PORT` | `5432` | Compose only | Host port the local database is published on. Defaults to `5432`. |
+| `TEST_DB_PORT` | `55433` | Test tooling only | Host port for the **disposable** PostGIS test database. Only read by `docker-compose.test.yml` / `scripts/disposable-db-test.mjs`; change it if 55433 is taken. |
 | `PORT` | `3000` | Yes | Port the API listens on. Falls back to `3000` if unset. |
 | `NODE_ENV` | `development` | Yes | Reported by the `/status` endpoint. Defaults to `development`. |
 | `JWT_SECRET` | `replace-with-a-long-random-secret-at-least-32-chars` | Yes (**required**) | Signing secret for auth tokens. Validated at startup: must be present and ≥ 32 characters. The application **fails closed** (refuses to boot) if it is missing or too short. No fallback secret exists. |
@@ -41,7 +53,11 @@ A local `.env` file may look like this:
 NODE_ENV=development
 PORT=3000
 
-DATABASE_URL="file:./dev.db"
+POSTGRES_USER=geofence
+POSTGRES_PASSWORD=replace-with-a-local-development-password
+POSTGRES_DB=geofence
+POSTGRES_PORT=5432
+DATABASE_URL="postgresql://geofence:replace-with-a-local-development-password@localhost:5432/geofence?schema=public"
 
 JWT_SECRET=replace-with-a-long-random-secret-at-least-32-chars
 JWT_EXPIRES_IN=1h
@@ -82,3 +98,5 @@ Before running the application, confirm that:
 | `.gitignore` | Prevents sensitive/local files from being committed. |
 | `README.md` | Main project overview and setup guide. |
 | `docs/project-status.md` | Tracks current project progress. |
+| `docker-compose.yml` | Local developer PostgreSQL/PostGIS database (persistent). |
+| `docker-compose.test.yml` | Disposable PostGIS database for migration/integration tests. |

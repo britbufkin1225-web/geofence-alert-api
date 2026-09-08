@@ -21,7 +21,10 @@ export class AppService {
 
     return {
       database: 'connected',
-      provider: 'sqlite',
+      // PostgreSQL is the only supported provider (GF-3). This is a literal
+      // rather than a value read from DATABASE_URL, so the authenticated
+      // response can never echo host, port or credentials.
+      provider: 'postgresql',
       status: 'ok',
     };
   }

@@ -1,29 +1,26 @@
 import type { Server } from 'http';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 
 import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
-import DatabaseConstructor from 'better-sqlite3';
 import request from 'supertest';
 
-import { AppModule } from '../app.module';
-import { setupApp } from '../app.setup';
-import { PrismaService } from '../prisma/prisma.service';
+import { AppModule } from '../../src/app.module';
+import { setupApp } from '../../src/app.setup';
+import { PrismaService } from '../../src/prisma/prisma.service';
+import { requireDisposableDatabaseUrl, truncateAll } from './support/database';
 
 /**
- * REAL database integration test (not a Prisma mock). It provisions a fresh,
- * isolated SQLite file in the OS temp directory, applies the project's actual
- * migration SQL to it, points the app at that file, and drives the HTTP API
- * end-to-end. It never touches the developer's dev.db, is deterministic, and
- * cleans up after itself.
+ * REAL database integration test (not a Prisma mock). It drives the HTTP API
+ * end-to-end against the disposable PostgreSQL/PostGIS database that
+ * `npm run test:db` provisions and migrates, then empties every table it used.
  *
- * Its purpose is to prove the tenant boundary (IDOR/BOLA mitigation): an
- * authenticated user of one tenant cannot read, list, search, modify or delete
- * another tenant's geofences, cannot create data owned by another tenant, and
- * cannot reassign ownership.
+ * Before GF-3 this same matrix ran against a temporary SQLite file. The
+ * assertions are deliberately unchanged: the tenant boundary (IDOR/BOLA
+ * mitigation) must hold identically on PostgreSQL. An authenticated user of one
+ * tenant cannot read, list, search, modify or delete another tenant's
+ * geofences, cannot create data owned by another tenant, and cannot reassign
+ * ownership; anonymous callers are refused outright.
  */
 
 const validGeofence = (name: string) => ({
@@ -32,17 +29,6 @@ const validGeofence = (name: string) => ({
   longitude: -97.7431,
   radiusMeters: 100,
 });
-
-// better-sqlite3 ships no type declarations and only this test touches it
-// directly, so we describe the minimal surface we use rather than pull in an
-// extra @types dependency.
-interface MigrationDb {
-  exec(sql: string): unknown;
-  close(): void;
-}
-const OpenDatabase = DatabaseConstructor as unknown as new (
-  path: string,
-) => MigrationDb;
 
 function decodeIdentityClaims(
   jwt: JwtService,
@@ -59,29 +45,6 @@ function decodeIdentityClaims(
   return { sub: claims.sub, mid: claims.mid };
 }
 
-function applyMigrations(dbFile: string): void {
-  const migrationsDir = path.join(process.cwd(), 'prisma', 'migrations');
-  const dirs = fs
-    .readdirSync(migrationsDir)
-    .filter((entry) =>
-      fs.statSync(path.join(migrationsDir, entry)).isDirectory(),
-    )
-    .sort();
-
-  const db = new OpenDatabase(dbFile);
-  try {
-    for (const dir of dirs) {
-      const sql = fs.readFileSync(
-        path.join(migrationsDir, dir, 'migration.sql'),
-        'utf8',
-      );
-      db.exec(sql);
-    }
-  } finally {
-    db.close();
-  }
-}
-
 interface AuthResponse {
   accessToken: string;
   tokenType: string;
@@ -89,14 +52,11 @@ interface AuthResponse {
   tenant: { id: string; name: string };
 }
 
-describe('Tenant isolation (real SQLite integration)', () => {
+describe('Tenant isolation (real PostgreSQL/PostGIS integration)', () => {
   let app: INestApplication;
   let server: Server;
   let jwt: JwtService;
   let prisma: PrismaService;
-  let tmpDir: string;
-  let dbFile: string;
-  const originalDatabaseUrl = process.env.DATABASE_URL;
 
   // Tenant A / User A and Tenant B / User B.
   let tokenA: string;
@@ -121,14 +81,9 @@ describe('Tenant isolation (real SQLite integration)', () => {
   };
 
   beforeAll(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gf2-tenant-iso-'));
-    dbFile = path.join(tmpDir, 'test.db');
-    applyMigrations(dbFile);
-
-    // Point the app at the isolated database BEFORE the module (and its
-    // PrismaService) is instantiated. ConfigModule/dotenv never overrides an
-    // already-set env var, so this wins.
-    process.env.DATABASE_URL = `file:${dbFile.replace(/\\/g, '/')}`;
+    // Fails loudly unless DATABASE_URL points at the disposable database, so
+    // the truncation below can never reach developer-owned data.
+    requireDisposableDatabaseUrl();
 
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -140,6 +95,10 @@ describe('Tenant isolation (real SQLite integration)', () => {
     server = app.getHttpServer() as Server;
     jwt = app.get(JwtService, { strict: false });
     prisma = app.get(PrismaService);
+
+    // Every integration suite shares one database; start from a known-empty
+    // state rather than depending on execution order.
+    await truncateAll(prisma);
 
     const a = await register('alice@example.com', 'password-A1', 'Tenant A');
     const b = await register('bob@example.com', 'password-B1', 'Tenant B');
@@ -164,24 +123,47 @@ describe('Tenant isolation (real SQLite integration)', () => {
   });
 
   afterAll(async () => {
+    if (prisma) {
+      await truncateAll(prisma);
+    }
     if (app) {
       await app.close();
-    }
-    if (originalDatabaseUrl === undefined) {
-      delete process.env.DATABASE_URL;
-    } else {
-      process.env.DATABASE_URL = originalDatabaseUrl;
-    }
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup; the OS temp dir is transient anyway.
     }
   });
 
   it('gives A and B distinct tenants', () => {
     expect(tenantAId).not.toEqual(tenantBId);
     expect(geofenceAId).not.toEqual(geofenceBId);
+  });
+
+  describe('anonymous access is denied', () => {
+    it.each([
+      ['GET', '/api/v1/geofences'],
+      ['GET', '/api/v1/geofences/summary'],
+      ['POST', '/api/v1/geofences'],
+      ['GET', '/api/v1/auth/me'],
+    ])('rejects unauthenticated %s %s with 401', async (method, path) => {
+      const call =
+        method === 'POST'
+          ? request(server).post(path).send(validGeofence('Anon'))
+          : request(server).get(path);
+      await call.expect(401);
+    });
+
+    it('cannot read a specific geofence without a token', async () => {
+      await request(server).get(`/api/v1/geofences/${geofenceAId}`).expect(401);
+    });
+
+    it('cannot delete a geofence without a token, and it survives', async () => {
+      await request(server)
+        .delete(`/api/v1/geofences/${geofenceAId}`)
+        .expect(401);
+
+      await request(server)
+        .get(`/api/v1/geofences/${geofenceAId}`)
+        .set('Authorization', auth(tokenA))
+        .expect(200);
+    });
   });
 
   describe('listing', () => {

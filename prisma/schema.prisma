@@ -2,8 +2,15 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// PostgreSQL is the single supported provider (GF-3). PostGIS is enabled by the
+// committed `enable_postgis` migration and is required for the Geofence spatial
+// column below.
+//
+// Prisma 7 no longer accepts `url` here: the connection string is read from the
+// DATABASE_URL environment variable by prisma.config.ts (for the CLI/Migrate)
+// and by PrismaService's driver adapter (for the running application).
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 enum AlertSeverity {
@@ -22,14 +29,19 @@ enum AlertStatus {
 // Authenticated identity. Login identity is the canonicalized (trimmed +
 // lowercased) email, enforced unique at the database layer. Only the bcrypt
 // password hash is stored; plaintext passwords are never persisted or logged.
+//
+// `email` is bounded to the RFC 5321 limit already enforced by the auth DTOs
+// (EMAIL_MAX_LENGTH). `passwordHash` is deliberately left unbounded text: its
+// length is an artifact of the hashing algorithm, not an API contract, so
+// pinning it would break a future algorithm change.
 model User {
   id           String       @id @default(cuid())
-  email        String       @unique
+  email        String       @unique @db.VarChar(254)
   passwordHash String
   memberships  Membership[]
 
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // A tenant is the unit of data ownership and isolation. Every geofence belongs
@@ -37,12 +49,12 @@ model User {
 // membership.
 model Tenant {
   id          String       @id @default(cuid())
-  name        String
+  name        String       @db.VarChar(120)
   memberships Membership[]
   geofences   Geofence[]
 
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Explicit user<->tenant relationship. Keeping membership separate from the
@@ -50,12 +62,12 @@ model Tenant {
 // roles) later without redesigning identity. The (userId, tenantId) pair is
 // unique so a user cannot join the same tenant twice.
 model Membership {
-  id        String   @id @default(cuid())
-  userId    String
-  tenantId  String
+  id       String @id @default(cuid())
+  userId   String
+  tenantId String
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -65,37 +77,59 @@ model Membership {
 }
 
 model Geofence {
-  id           String       @id @default(cuid())
+  id           String  @id @default(cuid())
   tenantId     String
-  name         String
-  description  String?
+  name         String  @db.VarChar(120)
+  description  String? @db.VarChar(1000)
   latitude     Float
   longitude    Float
   radiusMeters Float
-  isActive     Boolean      @default(true)
+  isActive     Boolean @default(true)
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  alertEvents  AlertEvent[]
+  // Canonical spatial representation of the circle center, as
+  // geography(Point, 4326) with longitude as X and latitude as Y.
+  //
+  // Prisma has no native PostGIS type, so this is declared as Unsupported: it is
+  // never selected or written by Prisma Client, and the scalar latitude/longitude
+  // fields above remain the application-facing read/write contract.
+  //
+  // The column is `GENERATED ALWAYS AS (...) STORED` (see the
+  // `geofence_spatial_constraints` migration). PostgreSQL computes it from
+  // latitude/longitude and rejects any attempt to write it directly, so the
+  // scalar and spatial representations cannot diverge. It is declared optional
+  // here only because Prisma Client refuses to create rows for models with a
+  // required Unsupported field; the database itself enforces NOT NULL.
+  centerPoint Unsupported("geography(Point, 4326)")?
 
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alertEvents AlertEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId])
+  // Declares the GiST index created by the geofence_spatial_constraints
+  // migration so Prisma knows it exists and does not try to drop it. The name
+  // is mapped explicitly to match the migration.
+  @@index([centerPoint], type: Gist, map: "Geofence_centerPoint_gist_idx")
 }
 
+// Schema-only model: no endpoint reads or writes AlertEvent yet, so its string
+// fields intentionally carry no database length bound — there is no API contract
+// to align them with. Bounds will be added with the alert workflow.
 model AlertEvent {
-  id          String        @id @default(cuid())
-  geofenceId  String
-  eventType   String
-  severity    AlertSeverity @default(MEDIUM)
-  status      AlertStatus   @default(OPEN)
-  message     String
-  source      String?
-  latitude    Float?
-  longitude   Float?
+  id         String        @id @default(cuid())
+  geofenceId String
+  eventType  String
+  severity   AlertSeverity @default(MEDIUM)
+  status     AlertStatus   @default(OPEN)
+  message    String
+  source     String?
+  latitude   Float?
+  longitude  Float?
 
-  geofence    Geofence      @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  geofence Geofence @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

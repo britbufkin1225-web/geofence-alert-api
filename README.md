@@ -6,9 +6,11 @@ A backend API for managing geofence records, built with NestJS and Prisma.
 > CRUD baseline. It implements user identity, password authentication (bcrypt),
 > Bearer/JWT sessions, per-tenant ownership of geofences with strict cross-tenant
 > isolation, and geofence create/read/update/delete with request validation,
-> pagination, filtering, and a summary endpoint, backed by **SQLite** via Prisma.
-> Location-event ingestion, spatial evaluation, alerting, and PostgreSQL/PostGIS
-> are **planned roadmap items and are not implemented**. See
+> pagination, filtering, and a summary endpoint, backed by **PostgreSQL with
+> PostGIS** via Prisma. Circle geofences store a canonical
+> `geography(Point, 4326)` centre with a GiST index (GF-3), but that is a storage
+> foundation only: location-event ingestion, spatial evaluation, and alerting are
+> **planned roadmap items and are not implemented**. See
 > [Currently Implemented vs Planned](#currently-implemented-vs-planned).
 
 ## Project Summary
@@ -33,8 +35,13 @@ the codebase provides the geofence-management foundation for that vision.
 - Explicit User ↔ Tenant membership model
 - Per-tenant ownership of geofences with server-derived tenant context
 - Strict cross-tenant isolation (IDOR/BOLA mitigation), verified against a real
-  SQLite database
-- Geofence CRUD (create, list, get-by-id, update, delete) via Prisma + SQLite
+  PostgreSQL database
+- Geofence CRUD (create, list, get-by-id, update, delete) via Prisma + PostgreSQL
+- PostgreSQL/PostGIS persistence with a canonical `geography(Point, 4326)`
+  geofence centre, kept in step with the scalar coordinates by a database
+  generated column, and indexed with GiST
+- Database-enforced CHECK constraints for coordinate ranges, radius bounds,
+  required ownership, and non-blank names
 - DTO-based request validation with bounded, deterministic limits
 - Pagination and name/active filtering for the list endpoint
 - Geofence summary (counts and radius aggregates)
@@ -43,8 +50,7 @@ the codebase provides the geofence-management foundation for that vision.
 
 **Planned but not yet implemented:**
 
-- PostgreSQL / PostGIS
-- Location-event ingestion and history
+- Location-event ingestion and history (GF-4)
 - Spatial containment, enter/exit/dwell evaluation
 - Alert creation and dispatch
 - Refresh tokens, password reset, MFA, RBAC, rate limiting, account lockout
@@ -66,8 +72,9 @@ This project demonstrates how a backend system can organize geofence data, recei
 - Strict cross-tenant isolation on every geofence operation
 - REST API for geofence management (`/api/v1/geofences`)
 - Health and status endpoints (`/health`, `/status`)
-- Environment-based configuration with fail-closed auth secret validation
-- SQLite-backed records via Prisma
+- Environment-based configuration with fail-closed auth secret and
+  `DATABASE_URL` validation
+- PostgreSQL/PostGIS-backed records via Prisma
 - DTO-based request validation with bounded limits
 - Query-based pagination and filtering (active status, name search, sorting)
 - Geofence summary reporting
@@ -78,15 +85,15 @@ This project demonstrates how a backend system can organize geofence data, recei
 
 - Location event tracking
 - Alert workflow support
-- PostgreSQL / PostGIS spatial features
+- Spatial evaluation (containment, enter/exit) on top of the GF-3 foundation
 
 ## Tech Stack
 
 | Area | Tools |
 | --- | --- |
 | Backend | NestJS, TypeScript, Node.js (>=20) |
-| Database (current) | SQLite via Prisma (`@prisma/adapter-better-sqlite3`) |
-| Database (planned) | PostgreSQL, PostGIS |
+| Database | PostgreSQL 16 + PostGIS 3.4 via Prisma (`@prisma/adapter-pg`) |
+| Local database | Docker Compose (`postgis/postgis:16-3.4`) |
 | Validation | class-validator, class-transformer |
 | Testing | Jest, Supertest |
 | Project Management | GitHub Projects, Issues, Labels |
@@ -212,7 +219,7 @@ internals, SQL, or filesystem paths:
 
 ## Database Design
 
-The current Prisma schema (SQLite) defines these models with string `cuid`
+The current Prisma schema (PostgreSQL) defines these models with string `cuid`
 primary keys:
 
 | Entity | Status | Purpose |
@@ -220,12 +227,39 @@ primary keys:
 | User | Implemented | Login identity (unique email) and bcrypt password hash |
 | Tenant | Implemented | Unit of data ownership and isolation |
 | Membership | Implemented | Explicit User ↔ Tenant relationship (unique per pair) |
-| Geofence | Implemented | Named circular geofence areas, owned by exactly one tenant |
+| Geofence | Implemented | Named circular geofence areas, owned by exactly one tenant, with a generated `geography(Point, 4326)` centre |
 | AlertEvent | Defined (schema only) | Alert records related to a geofence; no runtime logic yet |
 
 Every geofence carries a required `tenantId` foreign key. Ownership is set
 server-side from the authenticated principal and cannot be supplied or changed by
 a client.
+
+### Spatial representation (GF-3)
+
+Each circle geofence stores its centre twice, in two roles:
+
+| Representation | Role |
+| --- | --- |
+| `latitude` / `longitude` (`double precision`) | The API contract. What clients send and receive; unchanged by GF-3 |
+| `centerPoint` (`geography(Point, 4326)`) | The canonical spatial value, for future distance evaluation |
+
+`centerPoint` is a **stored generated column**:
+
+```sql
+GENERATED ALWAYS AS (
+  ST_SetSRID(ST_MakePoint("longitude", "latitude"), 4326)::geography
+) STORED
+```
+
+- **Longitude is X, latitude is Y** — the PostGIS argument order.
+- **SRID 4326** (WGS 84), matching the degrees the API accepts.
+- `geography` measures in **metres**, the same unit as `radiusMeters`.
+- Indexed by `Geofence_centerPoint_gist_idx` (GiST).
+- PostgreSQL computes it and **refuses any direct write**, so the scalar and
+  spatial values cannot drift apart.
+
+GF-3 adds no spatial queries: there is no containment, `ST_DWithin`, enter/exit,
+or alerting logic yet.
 
 Planned future entities (not in the schema):
 
@@ -283,14 +317,23 @@ Setup flow:
 
 ```bash
 npm install
-cp .env.example .env
-npx prisma generate
-npx prisma migrate deploy
+cp .env.example .env          # then set POSTGRES_PASSWORD, DATABASE_URL, JWT_SECRET
+npm run db:up                 # start PostgreSQL + PostGIS (Docker)
+npm run prisma:generate
+npm run prisma:migrate:deploy
 npm run start:dev
 ```
 
-The application uses a local SQLite database file (`DATABASE_URL="file:./dev.db"`
-by default). Real `.env` files should not be committed.
+The application requires **PostgreSQL with PostGIS**; `npm run db:up` starts the
+pinned `postgis/postgis:16-3.4` image from `docker-compose.yml` and waits behind
+a health check. `DATABASE_URL` must be a `postgresql://` connection string — the
+application **fails to start** without one, and there is no SQLite fallback.
+Real `.env` files should not be committed.
+
+> **Upgrading from a pre-GF-3 checkout:** the SQLite migrations were replaced by
+> a PostgreSQL history, so an existing `dev.db` is not migrated. Export anything
+> you need from it first. See
+> [docs/database-schema.md](docs/database-schema.md#the-gf-3-migration-reset).
 
 Authentication requires a signing secret. Set `JWT_SECRET` (minimum 32
 characters) in your `.env`; the application **fails to start** without it. Never
@@ -300,21 +343,34 @@ commit a real secret — `.env.example` ships a placeholder only. Optionally set
 Common scripts:
 
 ```bash
-npm run build      # compile
-npm test           # run the Jest test suite
-npm run lint       # non-mutating lint (CI/audit safe)
-npm run lint:fix   # lint with autofix
+npm run build                 # compile
+npm test                      # unit + HTTP suite (mocked Prisma, no database)
+npm run test:db               # disposable PostgreSQL/PostGIS verification
+npm run lint                  # non-mutating lint (CI/audit safe)
+npm run lint:fix              # lint with autofix
+
+npm run db:up                 # start the local database
+npm run db:stop               # stop it (data is preserved)
+npm run prisma:migrate:deploy # apply committed migrations
+npm run prisma:migrate:status # check migration state
 ```
+
+`npm run db:stop` only stops the container. Nothing in this repository deletes
+the `geofence_postgres_data` volume.
 
 ## Testing
 Detailed testing notes are available in [Testing Documentation](docs/testing.md).
 
-This project uses Jest for unit tests and Supertest for HTTP-level tests. Most
-tests boot a real Nest application with a mocked Prisma layer (no database
-required). Tenant isolation is additionally proven by a **real database
-integration test** that provisions an isolated, temporary SQLite database, applies
-the project's actual migrations, and drives the API end-to-end before cleaning
-itself up — it never touches your `dev.db`.
+This project uses Jest for unit tests and Supertest for HTTP-level tests. The
+default suite (`npm test`) boots a real Nest application with a mocked Prisma
+layer, so it needs no database.
+
+Database behavior is proven separately by `npm run test:db`, which starts a
+**disposable PostgreSQL/PostGIS container**, deploys the committed migrations,
+and runs the integration suite against it before removing the container. That
+database is RAM-backed, listens on `127.0.0.1:55433`, and uses its own Compose
+project and database name; the suite refuses to run against anything else, so it
+can never touch a developer database.
 
 Current test coverage includes:
 
@@ -322,7 +378,10 @@ Current test coverage includes:
 - Registration and login validation matrix (email, password, tenant name bounds)
 - Token handling (missing, malformed, altered, expired, `alg: none`)
 - Password hashing (no plaintext, per-hash salt, bcrypt 72-byte bound)
-- Tenant-isolation matrix against a real SQLite database (IDOR/BOLA)
+- Tenant-isolation matrix against a real PostgreSQL database (IDOR/BOLA)
+- PostGIS extension, geography column type/SRID, and GiST index presence
+- Database CHECK constraints (coordinate ranges, radius bounds, ownership)
+- Scalar/spatial synchronization: axis order, SRID stability, non-divergence
 - DTO validation boundaries and route-identifier (cuid) validation
 - `/api/v1` routing, the auth guard, and unversioned `/health` and `/status`
 - Unknown-field / mass-assignment rejection and the stable error contract
@@ -331,8 +390,8 @@ Current test coverage includes:
 Current verified test state:
 
 ```text
-Test Suites: 10 passed
-Tests: 116 passed
+Unit + HTTP     Test Suites: 9 passed    Tests: 96 passed
+Integration     Test Suites: 4 passed    Tests: 79 passed
 ```
 
 Additional planned testing includes:
@@ -354,7 +413,9 @@ Additional planned testing includes:
 | Phase 8 | Unit testing foundation | Complete |
 | GF-1 | Defensive validation baseline hardening | Complete |
 | GF-2 | Identity, authentication + tenant isolation | Complete |
-| GF-3+ | Spatial evaluation, location events, alerts | Planned |
+| GF-3 | PostgreSQL/PostGIS spatial foundation | Implemented (feature branch) |
+| GF-4 | Authenticated location-event ingestion | Next |
+| GF-5+ | Spatial evaluation, transitions, alerts | Planned |
 | Phase 10 | Documentation polish | In Progress |
 | Phase 11 | Portfolio polish | Planned |
 
@@ -366,7 +427,7 @@ This project is designed to demonstrate:
 - TypeScript/NestJS development
 - GIS-aware backend design
 - Database schema planning
-- PostgreSQL/PostGIS concepts
+- PostgreSQL/PostGIS spatial data modeling
 - Secure configuration handling
 - API testing and documentation
 - Professional GitHub project workflow

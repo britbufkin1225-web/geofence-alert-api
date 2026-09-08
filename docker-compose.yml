@@ -1,16 +1,39 @@
+# Local development stack. This is the DEVELOPER-OWNED database: its data lives
+# in the named volume `geofence_postgres_data` and is intended to persist across
+# restarts. Nothing in this repository's scripts deletes that volume.
+#
+# For throwaway migration/integration verification use docker-compose.test.yml
+# instead, which is a separate Compose project with no persistent storage.
+
 services:
   postgres:
-    image: postgres:16
+    # Pinned PostGIS-enabled PostgreSQL. The plain `postgres:16` image used
+    # before GF-3 cannot create the `postgis` extension the schema requires.
+    image: postgis/postgis:16-3.4
     container_name: geofence-alert-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-geofence}
+      POSTGRES_DB: ${POSTGRES_DB:-geofence}
+      # Required: no default is provided so the stack cannot start on a
+      # well-known password. Set POSTGRES_PASSWORD in your local .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (see .env.example)}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - geofence_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone reports the postmaster as up during initdb, so the
+      # check also runs a trivial query against the real database.
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} && psql -U $${POSTGRES_USER} -d $${POSTGRES_DB} -c 'SELECT 1' > /dev/null",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   api:
     build: .
@@ -18,10 +41,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Overrides the host-facing DATABASE_URL from .env: inside the Compose
+      # network the database is reachable as `postgres:5432`, not localhost.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-geofence}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-geofence}?schema=public
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:3000"
     depends_on:
-      - postgres
+      postgres:
+        # Wait for the health check above, not just for the container to exist.
+        condition: service_healthy
     volumes:
       - .:/app
       - /app/node_modules

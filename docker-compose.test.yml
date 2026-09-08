@@ -1,0 +1,45 @@
+# DISPOSABLE test database — never a developer database.
+#
+# Every identifier here is deliberately distinct from docker-compose.yml so that
+# tearing this stack down can never touch developer-owned data:
+#
+#   Compose project  geofence-gf3-disposable-test  (set by scripts/disposable-db-test.mjs)
+#   container        geofence-gf3-disposable-postgis
+#   database         geofence_gf3_disposable
+#   host port        55433 (not 5432)
+#   storage          tmpfs — no named or bind volume exists to delete
+#
+# Data lives in RAM and disappears with the container, so `docker compose down`
+# is sufficient cleanup and no `-v` volume removal is ever required.
+#
+# The credentials below are non-secret fixtures for a throwaway, RAM-backed,
+# loopback-only container. They are not used by any other environment.
+
+name: geofence-gf3-disposable-test
+
+services:
+  postgis-test:
+    image: postgis/postgis:16-3.4
+    container_name: geofence-gf3-disposable-postgis
+    environment:
+      POSTGRES_USER: geofence_test
+      POSTGRES_PASSWORD: geofence_test_only_not_a_secret
+      POSTGRES_DB: geofence_gf3_disposable
+      # `prisma migrate dev` provisions a shadow database on the same server.
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    ports:
+      # Bound to loopback only, on a port that will not collide with a local
+      # PostgreSQL install or the developer stack above.
+      - "127.0.0.1:${TEST_DB_PORT:-55433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U geofence_test -d geofence_gf3_disposable && psql -U geofence_test -d geofence_gf3_disposable -c 'SELECT 1' > /dev/null",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s

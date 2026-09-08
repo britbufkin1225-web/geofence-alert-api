@@ -6,33 +6,40 @@ This document tracks the current testing state for the GeoFence Alert API.
 
 This project uses Jest for backend unit testing.
 
-Tests are located alongside source files using the `.spec.ts` naming pattern.
-
-Current examples:
+Unit and HTTP tests live alongside the source files using the `.spec.ts`
+pattern. Database integration tests live under `test/integration/` using the
+`.integration-spec.ts` pattern and a separate Jest config
+(`test/jest-integration.json`), so they never run as part of `npm test`.
 
 ```text
-src/geofences/geofences.service.spec.ts
-src/geofences/geofences.controller.spec.ts
+src/geofences/geofences.service.spec.ts        # unit
+src/geofences/geofences.http.spec.ts           # HTTP, mocked Prisma
+test/integration/spatial-sync.integration-spec.ts   # real PostGIS database
 ```
 
 ## Running Tests
 
-Run the full test suite with:
-
 ```bash
-npm run test
+npm test                  # unit + HTTP suite (mocked Prisma, no database)
+npm test -- --runInBand   # same, deterministic ordering
+npm run test:db           # disposable PostgreSQL/PostGIS verification (needs Docker)
 ```
+
+`npm run test:db` is the command that proves the database layer. It starts the
+throwaway PostGIS container defined in `docker-compose.test.yml`, waits for its
+health check, runs `prisma migrate deploy`, regenerates Prisma Client, runs the
+integration suite, and removes the container again.
+
+`npm run test:integration` runs only the integration suite and expects
+`DATABASE_URL` to already point at a running disposable database — use it while
+iterating after `npm run test:db -- --keep`.
 
 ## Current Verified Test State
 
-The current verified test state is:
-
 ```text
-Test Suites: 10 passed
-Tests: 116 passed
+Unit + HTTP     Test Suites: 9 passed    Tests: 96 passed
+Integration     Test Suites: 4 passed    Tests: 79 passed
 ```
-
-Run the suite deterministically with `npm test -- --runInBand`.
 
 ## Test Architecture
 
@@ -42,16 +49,43 @@ Run the suite deterministically with `npm test -- --runInBand`.
 - **HTTP tests** — a real Nest app booted with a mocked Prisma layer, exercising
   routing, the global validation pipe, the auth guard, and the error contract
   (`geofences.http.spec.ts`, `auth/auth.http.spec.ts`). No database required.
-- **Real database integration test** — `auth/tenant-isolation.spec.ts`
-  provisions an isolated temporary SQLite database, applies the project's actual
-  migrations, and drives the API end-to-end to prove the tenant boundary. It
-  never touches `dev.db` and cleans up after itself.
-- **Migration regression test** — `auth/migration.spec.ts` applies the GF-1
-  schema, inserts legacy data, and proves the GF-2 migration preserves it under
-  the non-authenticatable bootstrap tenant with its foreign key and index.
+- **Integration tests** (`test/integration/*.integration-spec.ts`) — run against
+  a **real, migrated PostgreSQL/PostGIS database**:
+  - `database-structure.integration-spec.ts` — migration ledger, PostGIS
+    extension, the `geography(Point, 4326)` column, its STORED GENERATED
+    definition, the GiST index, foreign keys, uniqueness rules, and the
+    `VarChar` bounds.
+  - `database-constraints.integration-spec.ts` — coordinate ranges, radius
+    bounds, required/valid tenant ownership and non-blank names, proven by
+    raw inserts that bypass the validation pipe entirely.
+  - `spatial-sync.integration-spec.ts` — longitude→X / latitude→Y ordering,
+    SRID 4326, recomputation on update, and PostgreSQL's refusal to let the
+    spatial and scalar values diverge.
+  - `tenant-isolation.integration-spec.ts` — the full GF-2 tenant-boundary
+    matrix, ported unchanged from SQLite to PostgreSQL, plus anonymous-access
+    denial.
 
-> Terminology note: the mocked HTTP tests are **not** database integration tests.
-> Only `tenant-isolation.spec.ts` runs against a real database.
+### Disposable test database
+
+The integration suite is destructive (it truncates tables), so it is fenced off
+from developer data on several levels:
+
+| Property | Developer stack (`docker-compose.yml`) | Disposable stack (`docker-compose.test.yml`) |
+| --- | --- | --- |
+| Compose project | directory default | `geofence-gf3-disposable-test` |
+| Container | `geofence-alert-postgres` | `geofence-gf3-disposable-postgis` |
+| Database | `geofence` (configurable) | `geofence_gf3_disposable` |
+| Host port | `5432` | `127.0.0.1:55433` |
+| Storage | named volume `geofence_postgres_data` | `tmpfs` (RAM) |
+
+`test/integration/support/database.ts` refuses to run if `DATABASE_URL` does not
+name the `geofence_gf3_disposable` database, so pointing the suite at a real
+database fails with an explanatory error instead of wiping it. Teardown is a
+plain `docker compose down` — never `-v` — and there is no volume to delete
+because the test database lives in RAM.
+
+> Terminology note: the mocked HTTP tests are **not** database integration
+> tests. Only the files under `test/integration/` run against a real database.
 
 ## Current Test Coverage
 
@@ -60,8 +94,13 @@ Run the suite deterministically with `npm test -- --runInBand`.
 - Token handling: missing, malformed, altered (bad signature), missing/expired
   expiry, `alg: none`, inconsistent claims, and deleted memberships
 - Password hashing: no plaintext, per-hash salt, bcrypt 72-byte/UTF-8 bound
-- Tenant-isolation matrix (real DB): list/get/patch/delete/search/pagination/
-  summary cannot cross tenants; ownership cannot be forged or reassigned
+- Tenant-isolation matrix (real PostgreSQL): list/get/patch/delete/search/
+  pagination/summary cannot cross tenants; ownership cannot be forged or
+  reassigned; anonymous callers are refused
+- Database structure: PostGIS extension, geography column type/SRID, GiST index,
+  foreign keys, uniqueness rules
+- Database constraints: coordinate ranges, radius bounds, ownership requirements
+- Scalar/spatial synchronization: axis order, SRID stability, non-divergence
 - User enumeration resistance (generic 401 for wrong password vs unknown account)
 - DTO validation boundaries and route-identifier (cuid) validation
 - `/api/v1` routing and unversioned public `/health` and `/status`
@@ -71,8 +110,9 @@ Run the suite deterministically with `npm test -- --runInBand`.
 
 Additional planned test coverage includes:
 
-- Location-event processing behavior
-- Spatial containment / point-in-geofence evaluation
+- Location-event ingestion (GF-4)
+- Spatial containment / `ST_DWithin` evaluation
+- Enter/exit transition behavior
 - Alert workflow behavior
 
 ## Testing Notes
