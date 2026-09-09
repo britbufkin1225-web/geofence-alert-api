@@ -8,8 +8,9 @@ A backend API for managing geofence records, built with NestJS and Prisma.
 > isolation, and geofence create/read/update/delete with request validation,
 > pagination, filtering, and a summary endpoint, backed by **PostgreSQL with
 > PostGIS** via Prisma. Circle geofences store a canonical
-> `geography(Point, 4326)` centre with a GiST index (GF-3), but that is a storage
-> foundation only: location-event ingestion, spatial evaluation, and alerting are
+> `geography(Point, 4326)` centre with a GiST index (GF-3), and authenticated
+> location-event ingestion for tenant-owned tracked devices (GF-4, feature branch)
+> stores observations the same way. Spatial **evaluation** and alerting are still
 > **planned roadmap items and are not implemented**. See
 > [Currently Implemented vs Planned](#currently-implemented-vs-planned).
 
@@ -46,11 +47,14 @@ the codebase provides the geofence-management foundation for that vision.
 - Pagination and name/active filtering for the list endpoint
 - Geofence summary (counts and radius aggregates)
 - A consistent, non-leaky JSON error contract
+- Tenant-owned tracked devices and authenticated location-event ingestion, with
+  database-enforced idempotency and a documented replay-versus-conflict contract
+  (GF-4, feature branch)
 - Unit, HTTP-level, and real-database integration tests
 
 **Planned but not yet implemented:**
 
-- Location-event ingestion and history (GF-4)
+- Location-event history / query endpoints
 - Spatial containment, enter/exit/dwell evaluation
 - Alert creation and dispatch
 - Refresh tokens, password reset, MFA, RBAC, rate limiting, account lockout
@@ -151,6 +155,8 @@ Current implemented endpoints:
 | GET | `/api/v1/geofences/:id` | Retrieve a geofence by ID (own tenant only) | Bearer | Complete |
 | PATCH | `/api/v1/geofences/:id` | Update a geofence by ID (own tenant only) | Bearer | Complete |
 | DELETE | `/api/v1/geofences/:id` | Delete a geofence by ID (own tenant only) | Bearer | Complete |
+| POST | `/api/v1/tracked-devices` | Register a location source owned by the caller's tenant | Bearer | Complete (GF-4) |
+| POST | `/api/v1/location-events` | Ingest one observation from one of those devices | Bearer | Complete (GF-4) |
 
 A geofence that exists but belongs to another tenant is reported as `404 Not
 Found` — the API does not confirm the existence of resources outside the
@@ -161,7 +167,7 @@ Planned future endpoints (not implemented):
 | Method | Endpoint | Purpose | Status |
 | --- | --- | --- | --- |
 | GET | `/api/v1/alert-events` | List alert events | Planned |
-| POST | `/api/v1/location-events` | Submit a location event | Planned |
+| GET | `/api/v1/location-events` | Query location history | Planned |
 
 ### Geofence Query Parameters
 
@@ -390,8 +396,8 @@ Current test coverage includes:
 Current verified test state:
 
 ```text
-Unit + HTTP     Test Suites: 10 passed   Tests: 121 passed
-Integration     Test Suites: 4 passed    Tests: 85 passed
+Unit + HTTP     Test Suites: 13 passed   Tests: 274 passed
+Integration     Test Suites: 6 passed    Tests: 167 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -414,9 +420,10 @@ Additional planned testing includes:
 | Phase 8 | Unit testing foundation | Complete |
 | GF-1 | Defensive validation baseline hardening | Complete |
 | GF-2 | Identity, authentication + tenant isolation | Complete |
-| GF-3 | PostgreSQL/PostGIS spatial foundation | Implemented (feature branch) |
-| GF-4 | Authenticated location-event ingestion | Next |
-| GF-5+ | Spatial evaluation, transitions, alerts | Planned |
+| GF-3 | PostgreSQL/PostGIS spatial foundation | Complete |
+| GF-4 | Authenticated location-event ingestion | Implemented (feature branch) |
+| GF-5 | Deterministic point-in-circle evaluation | Next |
+| GF-6+ | Transitions and alerts | Planned |
 | Phase 10 | Documentation polish | In Progress |
 | Phase 11 | Portfolio polish | Planned |
 

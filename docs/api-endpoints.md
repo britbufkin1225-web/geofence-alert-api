@@ -5,9 +5,13 @@ This document outlines the **planned** API endpoints for the GeoFence Alert API.
 > **Implementation status.** This is a forward-looking design document. The
 > geofence and operational endpoints are implemented, and **authentication +
 > tenant isolation are now implemented (GF-2)** — see [docs/api.md](api.md) and
-> [docs/security.md](security.md). Tracked devices, location events, and alert
-> events remain **not implemented**. Several differences from this design exist
-> in the current code:
+> [docs/security.md](security.md). **Tracked-device registration and
+> location-event ingestion are now implemented (GF-4)** — see
+> [docs/gf4-location-event-ingestion.md](gf4-location-event-ingestion.md) — but
+> only as the two write endpoints listed there, not the full CRUD surface drawn
+> below. Alert events, geofence evaluation, and all read/query routes for devices
+> and events remain **not implemented**. Several differences from this design
+> exist in the current code:
 >
 > - `/health` and `/status` are served **unversioned at the root**, not under
 >   `/api/v1` as drawn below.
@@ -16,6 +20,10 @@ This document outlines the **planned** API endpoints for the GeoFence Alert API.
 >   Bearer token; a cross-tenant id returns `404`, not the resource.
 > - The implemented geofence responses return the record directly (not wrapped in
 >   a `{ message, data }` envelope shown below).
+> - The implemented device and location-event payloads use `deviceKey` /
+>   `eventKey` (opaque, tenant-scoped external keys) rather than the `deviceId` /
+>   `eventId` naming drawn below, because `*Id` in this codebase always means an
+>   internal `cuid`.
 >
 > For the endpoints that actually exist, see [docs/api.md](api.md).
 

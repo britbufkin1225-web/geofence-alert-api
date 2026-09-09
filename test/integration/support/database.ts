@@ -21,7 +21,7 @@ export function requireDisposableDatabaseUrl(): string {
  */
 export async function truncateAll(prisma: PrismaService): Promise<void> {
   requireDisposableDatabaseUrl();
-  await prisma.$executeRaw`TRUNCATE TABLE "AlertEvent", "Geofence", "Membership", "User", "Tenant" RESTART IDENTITY CASCADE`;
+  await prisma.$executeRaw`TRUNCATE TABLE "LocationEvent", "TrackedDevice", "AlertEvent", "Geofence", "Membership", "User", "Tenant" RESTART IDENTITY CASCADE`;
 }
 
 export function createPrismaService(): PrismaService {

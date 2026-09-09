@@ -210,8 +210,22 @@ const drift = run(
   ],
   { env: { DATABASE_URL }, capture: true },
 );
-const expectedDrift =
-  '-- AlterTable\nALTER TABLE "public"."Geofence" ALTER COLUMN "centerPoint" SET NOT NULL,\nALTER COLUMN "centerPoint" SET DEFAULT (st_setsrid(st_makepoint(longitude, latitude), 4326))::geography;';
+// The one drift Prisma will always report, now once per spatial table. Prisma
+// models both geography columns as optional `Unsupported(...)` fields and has no
+// concept of a STORED GENERATED column, so it reads the NOT NULL and the
+// generation expression (which it sees as a DEFAULT) as missing and offers to
+// add them back. PostgreSQL rejects both statements outright. The drift is
+// asserted verbatim rather than ignored, so any OTHER divergence -- an unapplied
+// migration, a hand-edited database -- still fails the run.
+const expectedDrift = [
+  '-- AlterTable',
+  'ALTER TABLE "public"."Geofence" ALTER COLUMN "centerPoint" SET NOT NULL,',
+  'ALTER COLUMN "centerPoint" SET DEFAULT (st_setsrid(st_makepoint(longitude, latitude), 4326))::geography;',
+  '',
+  '-- AlterTable',
+  'ALTER TABLE "public"."LocationEvent" ALTER COLUMN "observedPoint" SET NOT NULL,',
+  'ALTER COLUMN "observedPoint" SET DEFAULT (st_setsrid(st_makepoint(longitude, latitude), 4326))::geography;',
+].join('\n');
 if (
   drift.status !== 0 ||
   (drift.stdout ?? '').replace(/\r\n/g, '\n').trim() !== expectedDrift

@@ -1,13 +1,15 @@
 # Database Schema
 
 > **Implementation status.** The database is **PostgreSQL with PostGIS** (GF-3).
-> The Prisma schema contains `User`, `Tenant`, `Membership`, `Geofence`, and
-> `AlertEvent`; primary keys are string `cuid` values, **not** UUIDs. Identity
-> and per-tenant ownership are implemented (GF-2). Circle geofences now carry a
-> canonical `geography(Point, 4326)` centre with a GiST index. Spatial
-> *evaluation* — containment, distance, enter/exit — is **not** implemented; GF-3
-> builds the storage foundation only. The legacy "planned" section at the end of
-> this document predates GF-2 and is retained as historical context.
+> The Prisma schema contains `User`, `Tenant`, `Membership`, `Geofence`,
+> `AlertEvent`, and — added in GF-4 — `TrackedDevice` and `LocationEvent`;
+> primary keys are string `cuid` values, **not** UUIDs. Identity and per-tenant
+> ownership are implemented (GF-2). Circle geofences carry a canonical
+> `geography(Point, 4326)` centre with a GiST index, and location events carry
+> the same generated point representation. Spatial *evaluation* — containment,
+> distance, enter/exit — is **not** implemented; GF-3 and GF-4 build storage and
+> ingestion only. The legacy "planned" section at the end of this document
+> predates GF-2 and is retained as historical context.
 
 ## Current Schema (Implemented)
 
@@ -88,6 +90,62 @@ authenticated principal. See [security.md](security.md).
 
 No API endpoint reads or writes `AlertEvent` yet; the model exists to support
 future alert workflows.
+
+### `TrackedDevice` (implemented, GF-4)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `text` (`cuid`) | Primary key |
+| `tenantId` | `text` | **Required** FK → `Tenant.id` (cascade delete); set server-side, indexed |
+| `deviceKey` | `varchar(128)` | External key the source reports; unique **within** a tenant, non-blank |
+| `name` | `varchar(120)` | Required, non-blank |
+| `isActive` | `boolean` | Defaults to `true`; an inactive device cannot ingest |
+| `createdAt` / `updatedAt` | `timestamp(3)` | Timestamps |
+
+`@@unique([tenantId, deviceKey])` lets two tenants use the same external key for
+unrelated devices without colliding. `@@unique([id, tenantId])` exists so
+`LocationEvent` can reference the pair — see below.
+
+### `LocationEvent` (implemented, GF-4)
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `text` (`cuid`) | Primary key |
+| `tenantId` | `text` | Server-derived; part of the composite FK below |
+| `trackedDeviceId` | `text` | Resolved within the caller's tenant |
+| `eventKey` | `varchar(200)` | Client idempotency key, non-blank |
+| `observedAt` | `timestamptz(3)` | Instant supplied by the source |
+| `receivedAt` | `timestamptz(3)` | Server receipt, `DEFAULT CURRENT_TIMESTAMP` |
+| `latitude` | `double precision` | −90…90, not `NaN` |
+| `longitude` | `double precision` | −180…180, not `NaN` |
+| `accuracyMeters` | `double precision` | 0…100000, not `NaN` |
+| `observedPoint` | `geography(Point, 4326)` | **Generated** — same construction as `Geofence.centerPoint` |
+
+Rows are append-only, so the model carries a single `receivedAt` rather than the
+`createdAt`/`updatedAt` pair used by the mutable models; an `updatedAt` column
+would advertise a mutability the ingestion contract does not have.
+
+Both timestamps are `timestamptz` rather than the plain `timestamp` used by the
+older bookkeeping columns: `observedAt` comes from an external source with its
+own clock and offset, so preserving the absolute instant exactly is part of the
+contract.
+
+Two constraints carry the ownership invariant:
+
+- `@@unique([tenantId, trackedDeviceId, eventKey])` — the idempotency boundary,
+  tenant-qualified in its own right so one tenant's event key can never collide
+  with or disclose another's.
+- The composite foreign key `(trackedDeviceId, tenantId)` →
+  `TrackedDevice(id, tenantId)` — PostgreSQL rejects any event whose tenant
+  disagrees with its device's tenant, so the invariant does not depend on the
+  service layer being correct. Deletion cascades
+  `Tenant → TrackedDevice → LocationEvent`.
+
+`LocationEvent` has **no** GiST index, deliberately: the containment query a
+later phase will run probes the *geofence* index, and indexing observations would
+serve only a location-history API that does not exist. The integration suite
+asserts the absence so it stays a recorded decision. See
+[gf4-location-event-ingestion.md](gf4-location-event-ingestion.md).
 
 ## Circle geofence spatial representation (GF-3)
 
@@ -195,6 +253,13 @@ data written outside the NestJS validation pipe is still bounded.
 | `User_email_not_blank_check` | non-blank, no surrounding whitespace |
 | `AlertEvent_latitude_range_check` | null, or between −90 and 90 |
 | `AlertEvent_longitude_range_check` | null, or between −180 and 180 |
+| `LocationEvent_latitude_range_check` | `latitude` between −90 and 90 |
+| `LocationEvent_longitude_range_check` | `longitude` between −180 and 180 |
+| `LocationEvent_coordinates_finite_check` | neither coordinate is `NaN` |
+| `LocationEvent_accuracyMeters_range_check` | between 0 and 100000, and not `NaN` |
+| `LocationEvent_eventKey_not_blank_check` | ECMAScript-whitespace-trimmed key is not empty |
+| `TrackedDevice_deviceKey_not_blank_check` | ECMAScript-whitespace-trimmed key is not empty |
+| `TrackedDevice_name_not_blank_check` | ECMAScript-whitespace-trimmed name is not empty |
 
 Deliberate decisions:
 
@@ -206,6 +271,14 @@ Deliberate decisions:
 - `AlertEvent` string columns carry no length bound, because no endpoint reads or
   writes them yet and there is no contract to align with. Bounds arrive with the
   alert workflow.
+- The GF-4 `LocationEvent` checks exclude IEEE-754 `NaN` **explicitly**, because
+  `NaN` compares `false` against every bound, so a bare range check would admit
+  it through a direct SQL write. The same gap exists on the GF-3 `Geofence` and
+  `AlertEvent` coordinate checks; closing it there is not a GF-4 change and is
+  recorded here as known, outstanding work.
+- `LocationEvent.accuracyMeters` allows `0` (sources that consider a fix exact
+  legitimately report it) and caps at 100000 metres, past which an observation
+  cannot say anything about a geofence whose own radius may not exceed 5000.
 
 ## Migration history
 
@@ -215,6 +288,15 @@ Deliberate decisions:
 | `20260908102319_init_postgresql_baseline` | Prisma-generated tables, enums, foreign keys, indexes |
 | `20260908102400_geofence_spatial_constraints` | Generated spatial column, GiST index, CHECK constraints |
 | `20260908110000_audit_contract_hardening` | One-metre radius minimum and ECMAScript whitespace checks |
+| `20260909063002_tracked_devices_and_location_events` | GF-4 tables, composite FK, uniqueness and lookup indexes |
+| `20260909063100_location_event_spatial_constraints` | Generated `observedPoint`, CHECK constraints, no spatial index (by decision) |
+
+`20260909063002` is Prisma-generated with one hand edit, documented in the file
+itself: Prisma's leading `ALTER TABLE "Geofence" ... DROP DEFAULT` block was
+removed. That block is not a GF-4 change — it is Prisma re-proposing the known
+`centerPoint` drift, which PostgreSQL rejects outright and which would have
+reverted the GF-3 spatial guarantee had it succeeded. The drift itself is
+unchanged and still asserted verbatim by `scripts/disposable-db-test.mjs`.
 
 Deploy them with:
 

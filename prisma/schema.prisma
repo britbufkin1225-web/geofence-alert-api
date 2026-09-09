@@ -50,8 +50,9 @@ model User {
 model Tenant {
   id          String       @id @default(cuid())
   name        String       @db.VarChar(120)
-  memberships Membership[]
-  geofences   Geofence[]
+  memberships    Membership[]
+  geofences      Geofence[]
+  trackedDevices TrackedDevice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -132,4 +133,98 @@ model AlertEvent {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// A tenant-owned location source (GF-4). This is the minimum device foundation
+// the ingestion path requires: an event can only be accepted for a device that
+// the caller's tenant already owns. Enrollment workflows, per-device secrets and
+// device lifecycle management are deliberately not part of GF-4.
+//
+// `deviceKey` is the stable identifier the source reports about itself. It is
+// unique *within* a tenant, so two tenants may legitimately use the same key for
+// unrelated devices without colliding or learning about each other. Internal
+// relational identity stays on the cuid `id`; `deviceKey` is never used to look
+// a device up across tenants.
+model TrackedDevice {
+  id        String  @id @default(cuid())
+  tenantId  String
+  deviceKey String  @db.VarChar(128)
+  name      String  @db.VarChar(120)
+  isActive  Boolean @default(true)
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  locationEvents LocationEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // The same external key may exist in separate tenants; it may not repeat
+  // inside one.
+  @@unique([tenantId, deviceKey])
+  // Referenced by LocationEvent's composite foreign key below. PostgreSQL
+  // requires a unique constraint on the referenced column pair, and declaring it
+  // here is what makes a device/event tenant mismatch structurally impossible.
+  @@unique([id, tenantId])
+  @@index([tenantId])
+}
+
+// One location observation reported by a tracked device (GF-4).
+//
+// Rows are append-only: nothing in the API updates a location event, so the
+// model carries a single server-side `receivedAt` timestamp rather than the
+// createdAt/updatedAt pair used by the mutable models above. An `updatedAt`
+// column would advertise a mutability the ingestion contract does not have.
+//
+// GF-4 records observations only. No containment evaluation, transition state or
+// alert linkage exists here — those belong to a later phase and are not
+// pre-declared as unused columns.
+model LocationEvent {
+  id              String @id @default(cuid())
+  tenantId        String
+  trackedDeviceId String
+
+  // Client-supplied idempotency key. Uniqueness is scoped to
+  // (tenantId, trackedDeviceId, eventKey) — see the @@unique below.
+  eventKey String @db.VarChar(200)
+
+  // `observedAt` is the moment the source reports the fix was taken;
+  // `receivedAt` is when this server accepted it. Both are `timestamptz` so the
+  // stored value is an unambiguous absolute instant regardless of the session
+  // time zone of whatever process reads it. (The pre-existing bookkeeping
+  // columns elsewhere in this schema are plain `timestamp`; for a value supplied
+  // by an external source with its own clock and offset, preserving the instant
+  // exactly is part of the contract, so the more precise type is used here.)
+  observedAt DateTime @db.Timestamptz(3)
+  receivedAt DateTime @default(now()) @db.Timestamptz(3)
+
+  latitude       Float
+  longitude      Float
+  accuracyMeters Float
+
+  // Canonical spatial representation of the observation, as
+  // geography(Point, 4326) with longitude as X and latitude as Y — the same
+  // convention and SRID as Geofence.centerPoint.
+  //
+  // As with Geofence, this is `GENERATED ALWAYS AS (...) STORED` (see the
+  // `location_event_spatial_constraints` migration): PostgreSQL computes it from
+  // the scalar coordinates and refuses direct writes, so the two representations
+  // cannot diverge. It is optional here only because Prisma Client will not
+  // create rows for a model with a required Unsupported field; the database
+  // enforces NOT NULL.
+  observedPoint Unsupported("geography(Point, 4326)")?
+
+  // Composite foreign key. Referencing (id, tenantId) rather than id alone means
+  // PostgreSQL itself rejects any row whose tenant disagrees with its device's
+  // tenant — the ownership invariant is structural, not merely enforced by the
+  // service layer. Tenant deletion still cascades: Tenant -> TrackedDevice ->
+  // LocationEvent.
+  trackedDevice TrackedDevice @relation(fields: [trackedDeviceId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  // Idempotency boundary. Including tenantId is redundant with the composite
+  // foreign key above, but it keeps the constraint (and every replay lookup that
+  // uses it) tenant-qualified in its own right, so one tenant's event key can
+  // never collide with — or disclose — another's.
+  @@unique([tenantId, trackedDeviceId, eventKey])
+  // Supports the tenant-scoped device timeline that later phases read.
+  @@index([tenantId, trackedDeviceId, observedAt])
 }
