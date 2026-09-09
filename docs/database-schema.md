@@ -74,22 +74,58 @@ the explicit link that authorizes a user to act within a tenant.
 Every query for tenant-owned data is scoped by `tenantId` derived from the
 authenticated principal. See [security.md](security.md).
 
-### `AlertEvent` (schema only — no runtime logic)
+### `AlertEvent` (implemented, GF-7 — local only, awaiting audit)
+
+One durable record that a device crossed one geofence boundary in one direction,
+at one observed instant. GF-7 reuses the table declared unused by the GF-1
+baseline rather than adding a competing one.
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | `text` (`cuid`) | Primary key |
-| `geofenceId` | `text` | FK → `Geofence.id` (cascade delete) |
-| `eventType` | `text` | e.g. `ENTER` / `EXIT` |
-| `severity` | enum `AlertSeverity` | `LOW`/`MEDIUM`/`HIGH`/`CRITICAL`, default `MEDIUM` |
-| `status` | enum `AlertStatus` | `OPEN`/`ACKNOWLEDGED`/`RESOLVED`, default `OPEN` |
-| `message` | `text` | Required |
-| `source` | `text` | Optional |
-| `latitude` / `longitude` | `double precision` | Optional; range-checked when present |
-| `createdAt` / `updatedAt` | `timestamp(3)` | Timestamps |
+| `id` | `text` (`cuid`) | Primary key; the stable alert identity the API returns |
+| `tenantId` | `text` | **Required**; from the verified principal, never a request |
+| `trackedDeviceId` | `text` | **Required**; from the stored location event |
+| `geofenceId` | `text` | **Required**; the geofence whose boundary was crossed |
+| `sourceLocationEventId` | `text` | **Required**; the observation that produced the crossing |
+| `transition` | enum `GeofenceTransition` | **Required**; `ENTER` or `EXIT` only, by CHECK |
+| `observedAt` | `timestamptz(3)` | The source's own instant, copied from the event |
+| `eventType` | `text` | Legacy, nullable, unwritten — see below |
+| `severity` | enum `AlertSeverity` | Legacy; default `MEDIUM`; never read or advanced by GF-7 |
+| `status` | enum `AlertStatus` | Legacy; default `OPEN`; never read or advanced by GF-7 |
+| `message` | `text` | Legacy, nullable, unwritten — see below |
+| `source` | `text` | Legacy, nullable, unwritten |
+| `latitude` / `longitude` | `double precision` | Legacy, nullable, unwritten; range-checked when present |
+| `createdAt` / `updatedAt` | `timestamp(3)` | Timestamps; `createdAt` is the durable recording time |
 
-No API endpoint reads or writes `AlertEvent` yet; the model exists to support
-future alert workflows.
+Constraints and indexes:
+
+- `AlertEvent_crossing_key` — unique on
+  `(tenantId, trackedDeviceId, geofenceId, sourceLocationEventId, transition)`.
+  This is the deduplication boundary and the conflict target of the phase's
+  conflict-safe insert: one accepted crossing is one alert, whatever the retry,
+  replay or race.
+- `AlertEvent_transition_crossing_check` — `CHECK ("transition" IN ('ENTER','EXIT'))`.
+  A baseline, a stay or a stale observation cannot be recorded as an alert by any
+  code path, including a direct SQL session.
+- Three composite foreign keys on `(id, tenantId)` — onto `Geofence`,
+  `TrackedDevice` and `LocationEvent`, all `ON DELETE CASCADE`. A cross-tenant
+  alert is rejected by PostgreSQL, not merely avoided by the service. The GF-1
+  single-column `AlertEvent_geofenceId_fkey` is replaced by the composite
+  `AlertEvent_geofenceId_tenantId_fkey`, which enforces everything the old key
+  did and tenant agreement as well.
+- `AlertEvent_tenantId_sourceLocationEventId_idx` and
+  `AlertEvent_tenantId_geofenceId_idx` — the read-back and the cascades. Tenant
+  and device lookups need no index of their own: they are the leading columns of
+  the unique key.
+
+The legacy `eventType`, `message` and `source` columns were relaxed to nullable by
+the GF-7 migration and are deliberately left `NULL`. The authoritative crossing
+type is the typed `transition` column, so writing it again as free text would
+create a value that can disagree with it, and inventing a `message` would
+fabricate a notification template for a phase that sends nothing. No coordinate,
+distance, delivery, dwell or acknowledgement column exists.
+
+See [gf7-geofence-alert-events.md](gf7-geofence-alert-events.md).
 
 ### `TrackedDevice` (implemented, GF-4)
 

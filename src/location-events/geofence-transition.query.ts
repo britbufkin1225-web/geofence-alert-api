@@ -10,6 +10,10 @@ import {
   CONTAINMENT_DISTANCE_METERS,
   CONTAINMENT_PREDICATE,
 } from './geofence-containment.query';
+import {
+  GeofenceAlertIndex,
+  GeofenceAlertService,
+} from './geofence-alert.service';
 
 /**
  * One evaluated geofence for one observation.
@@ -26,6 +30,15 @@ export interface GeofenceTransitionRow {
   distanceMeters: number;
   state: GeofenceContainmentState;
   advancedTransition: GeofenceTransition | null;
+
+  /**
+   * The device this observation belongs to, and the instant its source reports
+   * it was taken. Both are read from the stored `LocationEvent`, not accepted
+   * from anyone, and both are carried out of the statement because GF-7 records
+   * them on an alert and must not re-derive them from a second, later read.
+   */
+  trackedDeviceId: string;
+  observedAt: Date;
 }
 
 /** The state a non-advancing observation was measured against. */
@@ -38,6 +51,13 @@ export interface GeofenceStoredStateRow {
 export interface GeofenceTransitionQueryResult {
   rows: GeofenceTransitionRow[];
   stored: GeofenceStoredStateRow[];
+
+  /**
+   * The durable alerts this observation's accepted crossings resolved to (GF-7),
+   * indexed by geofence. Empty when the observation crossed nothing — a baseline,
+   * a stay and a superseded observation all produce none.
+   */
+  alerts: GeofenceAlertIndex;
 }
 
 /**
@@ -162,6 +182,8 @@ export function evaluateAndAdvanceStatement(
       RETURNING "geofenceId", "lastTransition"
     )
     SELECT "evaluated"."geofenceId" AS "geofenceId",
+           "evaluated"."trackedDeviceId" AS "trackedDeviceId",
+           "evaluated"."observedAt" AS "observedAt",
            "evaluated"."name" AS "name",
            "evaluated"."radiusMeters" AS "radiusMeters",
            "evaluated"."distanceMeters" AS "distanceMeters",
@@ -209,22 +231,44 @@ export function storedStateStatement(
 }
 
 /**
- * The database boundary of GF-6. It owns the two statements above and performs
- * no classification, so what the database decides stays reviewable in one place.
+ * The database boundary of GF-6, and the transaction the GF-7 alert write joins.
+ *
+ * It owns the two statements above and performs no classification itself, so
+ * what the database decides stays reviewable in one place. The alert step it
+ * calls is a collaborator with its own policy, statements and tests; what this
+ * class contributes to GF-7 is only the transaction the alert must commit
+ * inside.
  */
 @Injectable()
 export class GeofenceTransitionQuery {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly alerts: GeofenceAlertService,
+  ) {}
 
   /**
    * Evaluates `locationEventId` against the active geofences of `tenantId`,
    * advancing the persisted device state wherever this observation is newer than
    * the one that state came from, and returns both halves of the answer.
    *
-   * The pair runs in one transaction so the follow-up read cannot be interleaved
-   * with a third party's advancement of a row this call has already resolved.
-   * The upsert is a single statement, so a failure of either query leaves state
-   * either fully advanced or untouched — never partially.
+   * The three steps run in one transaction so the follow-up read cannot be
+   * interleaved with a third party's advancement of a row this call has already
+   * resolved. The upsert is a single statement, so a failure of any query leaves
+   * state either fully advanced or untouched — never partially.
+   *
+   * Since GF-7 the alert write is the third step, and this transaction is why it
+   * lives here rather than one layer up in the ingestion service. A crossing is
+   * only ever visible in the instant it is classified: once the state row moves
+   * on, nothing can reconstruct that a boundary was crossed. So an accepted
+   * `ENTER` or `EXIT` and its alert must become durable together, and the only
+   * transaction that owns the advancement is this one. The alert boundary is
+   * still a separate, separately testable collaborator — it is handed this
+   * transaction, it does not open one.
+   *
+   * The alert step runs whether or not anything advanced. A replay of the event
+   * that owns a crossing advances nothing and must still resolve to that
+   * crossing's alert, which is also what repairs an alert lost to a failure
+   * between attempts.
    */
   async evaluateAndAdvance(
     locationEventId: string,
@@ -239,15 +283,22 @@ export class GeofenceTransitionQuery {
         .filter((row) => row.advancedTransition === null)
         .map((row) => row.geofenceId);
 
-      if (notAdvanced.length === 0) {
-        return { rows, stored: [] };
-      }
+      const stored =
+        notAdvanced.length === 0
+          ? []
+          : await tx.$queryRaw<GeofenceStoredStateRow[]>(
+              storedStateStatement(locationEventId, tenantId, notAdvanced),
+            );
 
-      const stored = await tx.$queryRaw<GeofenceStoredStateRow[]>(
-        storedStateStatement(locationEventId, tenantId, notAdvanced),
+      const alerts = await this.alerts.record(
+        tx,
+        tenantId,
+        locationEventId,
+        rows,
+        stored,
       );
 
-      return { rows, stored };
+      return { rows, stored, alerts };
     });
   }
 }

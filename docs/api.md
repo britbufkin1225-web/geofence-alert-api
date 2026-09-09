@@ -172,13 +172,10 @@ tenant returns the same `404` as one that exists nowhere.
 This endpoint is unchanged by GF-6: it stays a pure read, still returns
 containing geofences only, and reports no transition.
 
-Dwell detection, alerts and notification delivery are **not** part of GF-5 or
-GF-6 and remain future work.
+Dwell detection and notification delivery are **not** part of GF-5, GF-6 or GF-7
+and remain future work.
 
-## Geofence Transitions on Ingestion (GF-6, local only)
-
-Implemented locally on the
-`phase-gf-6-deterministic-geofence-transition-detection` branch; **not merged**.
+## Geofence Transitions on Ingestion (GF-6, merged)
 
 `POST /api/v1/location-events` returns an additive `geofenceTransitions` array
 beside the stored event. Every pre-GF-6 field keeps its meaning and value, so a
@@ -239,9 +236,66 @@ Semantics:
 }
 ```
 
-GF-6 creates **no** alert, notification or delivery record, and nothing in this
-shape asserts that anyone was notified. See
+GF-6 itself creates no alert, notification or delivery record. See
 [gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
+
+## Geofence Alerts on Ingestion (GF-7, local only)
+
+Implemented locally on the
+`phase-gf-7-deterministic-alert-event-creation-deduplication` branch and awaiting
+independent audit; **not merged**.
+
+GF-7 adds one optional field, `alert`, to each entry of the same
+`geofenceTransitions` array. There is no new route, and every field described
+above keeps its meaning and value, so a client that ignores `alert` is
+unaffected.
+
+Semantics:
+
+- `alert` is present **only** when `transition` is `ENTER` or `EXIT`, and the key
+  is absent entirely otherwise — not present and null. A baseline, a stay and a
+  superseded observation are successful classifications that are not crossings,
+  and GF-7 records an alert for nothing else.
+- `alert.id` is the stable identity of one durable alert event. It is identical on
+  every retry and replay of the same observation: one crossing is one alert.
+- `alert.createdAt` is when this server recorded the alert. On a replay it is the
+  **original** recording time, not the time of the replay, which is what
+  distinguishes an idempotent reuse from a second alert.
+- Present does not mean "created by this request". `stateAdvanced` is what says
+  whether this particular request advanced the state.
+- Deduplication is a database unique index on
+  `(tenantId, trackedDeviceId, geofenceId, sourceLocationEventId, transition)`,
+  combined with a conflict-safe insert. A uniqueness conflict is a successful
+  idempotent outcome and never surfaces as an error.
+- The alert commits in the same transaction as the transition advancement it
+  describes. Location-event creation remains outside that transaction, exactly as
+  in GF-6: a failure there returns 500 with the event stored, and an identical
+  retry converges to exactly one alert if no newer observation has superseded it.
+- Alert ownership is derived only from the verified principal and stored rows.
+  Caller-supplied tenant, device, geofence, direction or timestamp values are
+  rejected as unknown properties and never reach an alert.
+- Alert listing, acknowledgement, resolution and delivery are **not** part of
+  GF-7 and have no endpoint.
+
+```json
+{
+  "geofenceId": "clx0000000000000000000001",
+  "name": "Warehouse Zone",
+  "radiusMeters": 250,
+  "distanceMeters": 9.652,
+  "state": "INSIDE",
+  "transition": "ENTER",
+  "stateAdvanced": true,
+  "alert": {
+    "id": "clx0000000000000000000009",
+    "createdAt": "2026-09-09T06:00:01.482Z"
+  }
+}
+```
+
+GF-7 creates **no** notification or delivery record. An alert is a recorded fact,
+not a message, and nothing in this shape asserts that anyone was notified. See
+[gf7-geofence-alert-events.md](gf7-geofence-alert-events.md).
 
 ---
 

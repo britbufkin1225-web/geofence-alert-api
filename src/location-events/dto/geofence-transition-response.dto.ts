@@ -1,14 +1,16 @@
 import { GeofenceContainmentState, GeofenceTransition } from '@prisma/client';
 
+import { GeofenceAlertDto } from './geofence-alert-response.dto';
+
 export { GeofenceContainmentState, GeofenceTransition };
 
 /**
  * How one accepted observation relates to one active geofence of the caller's
  * tenant (GF-6).
  *
- * This describes containment and its change. It is explicitly NOT an alert: no
- * alert, notification or delivery record exists in GF-6, and nothing in this
- * shape claims that anything was sent.
+ * This describes containment and its change. Since GF-7 a crossing also carries
+ * the durable alert it produced, and nothing more: an alert here is a recorded
+ * fact, not a message, and nothing in this shape claims that anything was sent.
  *
  * Deliberately absent, for the same reasons as the GF-5 evaluation contract:
  * `tenantId`, which the caller proved by authenticating; the derived
@@ -69,4 +71,25 @@ export interface GeofenceTransitionDto {
    * `false` here is a normal, successful outcome, not a failure.
    */
   stateAdvanced: boolean;
+
+  /**
+   * The durable alert this crossing produced (GF-7).
+   *
+   * Additive and optional: the key is present only when `transition` is `ENTER`
+   * or `EXIT`, and is absent entirely otherwise, so every field above keeps the
+   * meaning and the value it had before GF-7 and a client that ignores this one
+   * is unaffected.
+   *
+   * Present does not mean "created by this request". A retry, a replay of the
+   * same observation, or a repair after a failed attempt all resolve to the same
+   * alert, and `alert.id` is identical every time — that is how a client can tell
+   * one crossing was recorded once rather than repeatedly. `stateAdvanced` is
+   * what says whether this particular request was the one that advanced the
+   * state.
+   *
+   * Absent is not a failure either. A baseline, a stay and a superseded
+   * observation are successful classifications that are not crossings, and GF-7
+   * records an alert for nothing else.
+   */
+  alert?: GeofenceAlertDto;
 }

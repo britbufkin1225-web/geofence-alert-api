@@ -1,5 +1,10 @@
 import { GeofenceContainmentState, GeofenceTransition } from '@prisma/client';
 
+import { GeofenceAlertQuery, GeofenceAlertRow } from './geofence-alert.query';
+import {
+  GeofenceAlertIndex,
+  GeofenceAlertService,
+} from './geofence-alert.service';
 import {
   GeofenceStoredStateRow,
   GeofenceTransitionQuery,
@@ -27,6 +32,32 @@ const EVENT_ID = 'ceventaaaaaaaaaaaaaaaaaaa';
 const OTHER_EVENT_ID = 'ceventbbbbbbbbbbbbbbbbbbb';
 const GEOFENCE_A = 'cgeoaaaaaaaaaaaaaaaaaaaaa';
 const GEOFENCE_B = 'cgeobbbbbbbbbbbbbbbbbbbbb';
+const DEVICE_ID = 'cdeviceaaaaaaaaaaaaaaaaaa';
+const OBSERVED_AT = new Date('2026-09-09T06:00:00.000Z');
+const ALERT_CREATED_AT = new Date('2026-09-09T06:00:01.000Z');
+
+/**
+ * The alert index the GF-7 boundary hands back for a crossing, as this GF-6
+ * service sees it. Non-crossing classifications get an empty index, which is
+ * what the real boundary returns for them.
+ */
+const alertsFor = (
+  transition: GeofenceTransition,
+  geofenceId = GEOFENCE_A,
+): GeofenceAlertIndex =>
+  transition === 'ENTER' || transition === 'EXIT'
+    ? new Map<string, GeofenceAlertRow>([
+        [
+          geofenceId,
+          {
+            id: `calert-${geofenceId}`,
+            geofenceId,
+            transition,
+            createdAt: ALERT_CREATED_AT,
+          },
+        ],
+      ])
+    : new Map<string, GeofenceAlertRow>();
 
 const row = (
   overrides: Partial<GeofenceTransitionRow> = {},
@@ -37,6 +68,8 @@ const row = (
   distanceMeters: 12.3456789,
   state: 'INSIDE',
   advancedTransition: 'BASELINE_INSIDE',
+  trackedDeviceId: DEVICE_ID,
+  observedAt: OBSERVED_AT,
   ...overrides,
 });
 
@@ -56,11 +89,23 @@ describe('GeofenceTransitionService', () => {
     evaluateAndAdvance,
   } as unknown as GeofenceTransitionQuery;
 
-  const service = new GeofenceTransitionService(transitionQuery);
+  // The alert boundary is real here, not a mock: the only part of it this
+  // service reaches is `describe`, which is pure. Its query collaborator is
+  // never touched, because persistence happens inside the transition query that
+  // is mocked above.
+  const alertService = new GeofenceAlertService(
+    {} as unknown as GeofenceAlertQuery,
+  );
+
+  const service = new GeofenceTransitionService(transitionQuery, alertService);
 
   beforeEach(() => {
     jest.clearAllMocks();
-    evaluateAndAdvance.mockResolvedValue({ rows: [], stored: [] });
+    evaluateAndAdvance.mockResolvedValue({
+      rows: [],
+      stored: [],
+      alerts: new Map<string, GeofenceAlertRow>(),
+    });
   });
 
   describe('delegation', () => {
@@ -80,6 +125,7 @@ describe('GeofenceTransitionService', () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ advancedTransition: 'ENTER' })],
         stored: [],
+        alerts: alertsFor('ENTER'),
       });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -99,6 +145,7 @@ describe('GeofenceTransitionService', () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ advancedTransition })],
         stored: [],
+        alerts: alertsFor(advancedTransition),
       });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -112,6 +159,7 @@ describe('GeofenceTransitionService', () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ advancedTransition: null })],
         stored: [storedRow({ lastTransition: 'ENTER' })],
+        alerts: alertsFor('ENTER'),
       });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -136,6 +184,7 @@ describe('GeofenceTransitionService', () => {
               lastLocationEventId: OTHER_EVENT_ID,
             }),
           ],
+          alerts: new Map<string, GeofenceAlertRow>(),
         });
 
         const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -149,6 +198,7 @@ describe('GeofenceTransitionService', () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ state: 'OUTSIDE', advancedTransition: null })],
         stored: [],
+        alerts: new Map<string, GeofenceAlertRow>(),
       });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -161,6 +211,7 @@ describe('GeofenceTransitionService', () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ state: 'OUTSIDE', advancedTransition: null })],
         stored: [storedRow({ geofenceId: GEOFENCE_B, lastTransition: 'EXIT' })],
+        alerts: new Map<string, GeofenceAlertRow>(),
       });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -174,6 +225,7 @@ describe('GeofenceTransitionService', () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ distanceMeters: 12.3456789 })],
         stored: [],
+        alerts: new Map<string, GeofenceAlertRow>(),
       });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
@@ -183,10 +235,16 @@ describe('GeofenceTransitionService', () => {
     });
 
     it('returns only the documented fields', async () => {
-      evaluateAndAdvance.mockResolvedValue({ rows: [row()], stored: [] });
+      evaluateAndAdvance.mockResolvedValue({
+        rows: [row()],
+        stored: [],
+        alerts: new Map<string, GeofenceAlertRow>(),
+      });
 
       const [transition] = await service.evaluate(EVENT_ID, TENANT);
 
+      // Unchanged from GF-6. The GF-7 `alert` key is additive and appears only
+      // on a crossing, so a baseline still serializes exactly as it always did.
       expect(Object.keys(transition).sort()).toEqual([
         'distanceMeters',
         'geofenceId',
@@ -205,6 +263,7 @@ describe('GeofenceTransitionService', () => {
           row({ geofenceId: GEOFENCE_B, distanceMeters: 2 }),
         ],
         stored: [],
+        alerts: new Map<string, GeofenceAlertRow>(),
       });
 
       const transitions = await service.evaluate(EVENT_ID, TENANT);

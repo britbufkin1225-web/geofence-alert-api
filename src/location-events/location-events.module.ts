@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 
+import { GeofenceAlertQuery } from './geofence-alert.query';
+import { GeofenceAlertService } from './geofence-alert.service';
 import { GeofenceContainmentQuery } from './geofence-containment.query';
 import { GeofenceEvaluationService } from './geofence-evaluation.service';
 import { GeofenceTransitionQuery } from './geofence-transition.query';
@@ -17,6 +19,8 @@ import { LocationEventsService } from './location-events.service';
     GeofenceContainmentQuery,
     GeofenceTransitionService,
     GeofenceTransitionQuery,
+    GeofenceAlertService,
+    GeofenceAlertQuery,
     PrismaService,
   ],
 })

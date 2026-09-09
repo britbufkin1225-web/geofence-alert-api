@@ -47,6 +47,7 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
         '20260909063002_tracked_devices_and_location_events',
         '20260909063100_location_event_spatial_constraints',
         '20260909120000_geofence_device_transition_state',
+        '20260909180000_geofence_alert_events',
       ]);
       expect(rows.every((row) => row.finished)).toBe(true);
       expect(rows.some((row) => row.rolled_back)).toBe(false);
@@ -183,8 +184,15 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
         rows.map((row) => [row.constraint_name, row.definition]),
       );
 
+      // GF-7 replaced AlertEvent's single-column geofence key with the
+      // composite (geofenceId, tenantId) one below, and added the device
+      // and source-event keys beside it. Every one of them is
+      // tenant-consistent, so an alert cannot reference a row outside its
+      // own tenant.
       expect([...byName.keys()]).toEqual([
-        'AlertEvent_geofenceId_fkey',
+        'AlertEvent_geofenceId_tenantId_fkey',
+        'AlertEvent_sourceLocationEventId_tenantId_fkey',
+        'AlertEvent_trackedDeviceId_tenantId_fkey',
         'Geofence_tenantId_fkey',
         'Membership_tenantId_fkey',
         'Membership_userId_fkey',
@@ -259,6 +267,8 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
       expect(rows.map((row) => row.constraint_name)).toEqual([
         'AlertEvent_latitude_range_check',
         'AlertEvent_longitude_range_check',
+        // GF-7: only a real boundary crossing may be stored as an alert.
+        'AlertEvent_transition_crossing_check',
         'Geofence_latitude_range_check',
         'Geofence_longitude_range_check',
         'Geofence_name_not_blank_check',
