@@ -145,7 +145,7 @@ describe('GeofenceTransitionService', () => {
       },
     );
 
-    it('claims no crossing when the state row was retired between statements', async () => {
+    it('defensively claims no crossing if the stored row is missing', async () => {
       evaluateAndAdvance.mockResolvedValue({
         rows: [row({ state: 'OUTSIDE', advancedTransition: null })],
         stored: [],

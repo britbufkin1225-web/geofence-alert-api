@@ -52,7 +52,8 @@ export interface GeofenceTransitionDto {
    *   claimed.
    * - `ENTER` / `EXIT` — the device crossed the boundary since the previous
    *   accepted observation.
-   * - `STAY_INSIDE` / `STAY_OUTSIDE` — no crossing.
+   * - `STAY_INSIDE` / `STAY_OUTSIDE` — same containment when advancing;
+   *   no crossing can be inferred when stale (not proof of remaining there).
    *
    * A replay of the event that wrote the current state repeats that event's
    * original classification verbatim. An observation older than the current

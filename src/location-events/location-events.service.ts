@@ -111,13 +111,13 @@ export class LocationEventsService {
    * first attempt may have stored the event and then failed before advancing
    * state, and the retry that reaches the replay path is what completes it. The
    * advancement itself is guarded by the observation ordering, so re-running it
-   * for an event that already advanced state changes nothing and reports the
-   * same classification.
+   * for an event that still owns state changes nothing and reports the same
+   * classification. A superseded event follows the stale-observation policy.
    *
    * A failure here fails the request rather than being swallowed. The event
    * stays stored, so the client's next retry with the same `eventKey` resolves
-   * to the same replay and finishes the work — reporting success while silently
-   * dropping the classification would be the worse contract.
+   * to the same event. It repairs missing state only if no newer observation has
+   * superseded it; no historical comparison can be reconstructed afterward.
    */
   private async complete(
     event: LocationEvent,

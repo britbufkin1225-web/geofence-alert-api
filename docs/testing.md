@@ -36,9 +36,13 @@ iterating after `npm run test:db -- --keep`.
 
 ## Current Verified Test State
 
+The counts below include GF-6 hardening: both lifecycle lock interleavings,
+replay/stale conflict locks, real failure/retry recovery, and all four cascade
+paths. The focused GF-6 integration suite contains 54 tests.
+
 ```text
 Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
-Integration     Test Suites: 8 passed    Tests: 251 passed
+Integration     Test Suites: 8 passed    Tests: 263 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 

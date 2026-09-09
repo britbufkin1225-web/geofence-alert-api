@@ -7,6 +7,12 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { setupApp } from '../../src/app.setup';
 import { GeofenceTransitionService } from '../../src/location-events/geofence-transition.service';
+import {
+  evaluateAndAdvanceStatement,
+  storedStateStatement,
+  GeofenceTransitionRow,
+  GeofenceStoredStateRow,
+} from '../../src/location-events/geofence-transition.query';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { requireDisposableDatabaseUrl, truncateAll } from './support/database';
 
@@ -726,6 +732,28 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       const row = await stateRow(tenantAId, deviceId, geofence.id);
       expect(row?.lastLocationEventId).toBe(high);
       expect(row?.state).toBe('OUTSIDE');
+      await prisma.geofenceDeviceState.deleteMany({
+        where: { tenantId: tenantAId },
+      });
+      await service.evaluate(low, tenantAId);
+      await service.evaluate(high, tenantAId);
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toMatchObject({
+        lastLocationEventId: high,
+        state: 'OUTSIDE',
+        lastTransition: 'EXIT',
+      });
+      await prisma.geofenceDeviceState.deleteMany({
+        where: { tenantId: tenantAId },
+      });
+      await Promise.all(
+        [high, low, high, low, high, low].map((id) =>
+          service.evaluate(id, tenantAId),
+        ),
+      );
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toMatchObject({
+        lastLocationEventId: high,
+        state: 'OUTSIDE',
+      });
     });
 
     it('does not advance state twice when an idempotent event is replayed', async () => {
@@ -772,6 +800,27 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       expect(after?.lastLocationEventId).toBe(before?.lastLocationEventId);
       expect(after?.updatedAt.toISOString()).toBe(
         before?.updatedAt.toISOString(),
+      );
+      await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: FAR,
+        observedAt: at(2),
+      });
+      const superseding = await stateRow(tenantAId, deviceId, geofence.id);
+      const supersededReplay = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(1),
+        eventKey: 'evt-inside',
+        expect: 200,
+      });
+      expect(transitionFor(supersededReplay, geofence.id)).toMatchObject({
+        state: 'INSIDE',
+        transition: 'STAY_INSIDE',
+        stateAdvanced: false,
+      });
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toEqual(
+        superseding,
       );
     });
 
@@ -869,6 +918,64 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
   });
 
   describe('authorization and isolation', () => {
+    it('rejects foreign and injection-shaped inputs at the raw-query boundary', async () => {
+      // Both tenants must have applicable geofences: otherwise removing the
+      // event tenant predicate could still return [] for the wrong reason.
+      await createGeofence({
+        tenantId: tenantBId,
+        name: 'Other tenant depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      const geofence = await createGeofence({
+        tenantId: tenantAId,
+        name: 'Depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      const deviceId = await registerDevice(tokenA, 'device-1');
+      const event = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(0),
+      });
+      const before = await stateRow(tenantAId, deviceId, geofence.id);
+      const service = app.get(GeofenceTransitionService);
+      for (const [eventId, tenantId] of [
+        [event.id, tenantBId],
+        ["' OR TRUE --", tenantAId],
+        [event.id, "' OR TRUE --"],
+        ['invalid-id', tenantAId],
+      ]) {
+        await expect(service.evaluate(eventId, tenantId)).resolves.toEqual([]);
+      }
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toEqual(before);
+      const foreignDevice = await registerDevice(tokenB, 'device-1');
+      const foreignEvent = await ingest(tokenB, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(0),
+      });
+      for (const data of [
+        { trackedDeviceId: foreignDevice },
+        { lastLocationEventId: foreignEvent.id },
+      ]) {
+        await expect(
+          prisma.geofenceDeviceState.update({
+            where: {
+              tenantId_trackedDeviceId_geofenceId: {
+                tenantId: tenantAId,
+                trackedDeviceId: deviceId,
+                geofenceId: geofence.id,
+              },
+            },
+            data,
+          }),
+        ).rejects.toMatchObject({ code: 'P2003' });
+      }
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toEqual(before);
+    });
+
     it('writes no state for an unauthenticated submission', async () => {
       await createGeofence({
         tenantId: tenantAId,
@@ -1018,6 +1125,42 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
   });
 
   describe('geofence applicability', () => {
+    it('rolls back deactivation if state retirement fails', async () => {
+      const geofence = await createGeofence({
+        tenantId: tenantAId,
+        name: 'Depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      await registerDevice(tokenA, 'device-1');
+      await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(0),
+      });
+      await prisma.$executeRaw`ALTER TABLE "GeofenceDeviceState" RENAME TO "GeofenceDeviceState_hidden"`;
+      try {
+        const response = await request(server)
+          .patch(`/api/v1/geofences/${geofence.id}`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send({ isActive: false })
+          .expect(500);
+        expect((response.body as ErrorBody).message).toBe(
+          'Internal server error',
+        );
+        expect(
+          (
+            await prisma.geofence.findUniqueOrThrow({
+              where: { id: geofence.id },
+            })
+          ).isActive,
+        ).toBe(true);
+      } finally {
+        await prisma.$executeRaw`ALTER TABLE "GeofenceDeviceState_hidden" RENAME TO "GeofenceDeviceState"`;
+      }
+      expect(await prisma.geofenceDeviceState.count()).toBe(1);
+    });
+
     it('excludes an inactive geofence from evaluation', async () => {
       const active = await createGeofence({
         tenantId: tenantAId,
@@ -1105,6 +1248,14 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
           .send({ isActive })
           .expect(200);
 
+      const before = await prisma.geofenceDeviceState.findMany();
+      await request(server)
+        .patch(`/api/v1/geofences/${geofence.id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ name: 'Renamed' })
+        .expect(200);
+      expect(await prisma.geofenceDeviceState.findMany()).toEqual(before);
+      await patch(false);
       await patch(false);
       await patch(true);
 
@@ -1249,7 +1400,7 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
   });
 
   describe('concurrency and error safety', () => {
-    it('creates one state row when concurrent observations race for the same identity', async () => {
+    it('lets ingestion finish before deactivation retires its state', async () => {
       const geofence = await createGeofence({
         tenantId: tenantAId,
         name: 'Depot',
@@ -1257,44 +1408,348 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
         radiusMeters: 250,
       });
       const deviceId = await registerDevice(tokenA, 'device-1');
-
-      const submissions = Array.from({ length: 8 }, (_unused, index) =>
-        request(server)
-          .post('/api/v1/location-events')
-          .set('Authorization', `Bearer ${tokenA}`)
-          .send({
-            deviceKey: 'device-1',
-            eventKey: `race-${index}`,
-            observedAt: at(index).toISOString(),
-            latitude: index % 2 === 0 ? AUSTIN.latitude : FAR.latitude,
-            longitude: AUSTIN.longitude,
-            accuracyMeters: 5,
-          }),
-      );
-
-      const responses = await Promise.all(submissions);
-      expect(responses.map((res) => res.status)).toEqual(
-        new Array(8).fill(201) as number[],
-      );
-
-      const rows = await prisma.geofenceDeviceState.findMany({
-        where: { tenantId: tenantAId, trackedDeviceId: deviceId },
+      const event = await prisma.locationEvent.create({
+        data: {
+          tenantId: tenantAId,
+          trackedDeviceId: deviceId,
+          eventKey: 'ingestion-first',
+          observedAt: at(0),
+          accuracyMeters: 5,
+          ...AUSTIN,
+        },
       });
-      expect(rows).toHaveLength(1);
-
-      // Whatever the interleaving, the newest observation owns the state.
-      const newest = responses
-        .map((res) => res.body as EventBody)
-        .reduce((latest, candidate) =>
-          Date.parse(candidate.observedAt) > Date.parse(latest.observedAt)
-            ? candidate
-            : latest,
+      let deactivation: Promise<request.Response> | undefined;
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            const [holder] = await tx.$queryRaw<
+              Array<{ pid: number }>
+            >`SELECT pg_backend_pid() AS pid`;
+            const rows = await tx.$queryRaw<GeofenceTransitionRow[]>(
+              evaluateAndAdvanceStatement(event.id, tenantAId),
+            );
+            expect(rows[0].advancedTransition).toBe('BASELINE_INSIDE');
+            deactivation = request(server)
+              .patch(`/api/v1/geofences/${geofence.id}`)
+              .set('Authorization', `Bearer ${tokenA}`)
+              .send({ isActive: false })
+              .then((response) => response);
+            const deadline = Date.now() + 4000;
+            for (;;) {
+              const [lock] = await prisma.$queryRaw<
+                Array<{ blocked: boolean }>
+              >`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND query LIKE 'UPDATE%"Geofence"%'
+                  AND ${holder.pid}::integer = ANY(pg_blocking_pids(pid))
+              ) AS blocked
+            `;
+              if (lock.blocked) break;
+              if (Date.now() > deadline)
+                throw new Error(
+                  'Deactivation did not wait on the geofence lock',
+                );
+            }
+            expect(await tx.geofenceDeviceState.count()).toBe(1);
+          },
+          { timeout: 10000 },
         );
-      expect(rows[0].lastLocationEventId).toBe(newest.id);
-      expect(rows[0].lastObservedAt.toISOString()).toBe(at(7).toISOString());
-      expect(rows[0].state).toBe('OUTSIDE');
-      expect(rows[0].geofenceId).toBe(geofence.id);
+      } finally {
+        if (deactivation) expect((await deactivation).status).toBe(200);
+      }
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toBeNull();
+      await request(server)
+        .patch(`/api/v1/geofences/${geofence.id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isActive: true })
+        .expect(200);
+      const next = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: FAR,
+        observedAt: at(1),
+      });
+      expect(transitionFor(next, geofence.id).transition).toBe(
+        'BASELINE_OUTSIDE',
+      );
     });
+
+    it('rolls back all geofence advancement when one state write violates a constraint', async () => {
+      await createGeofence({
+        tenantId: tenantAId,
+        name: 'First',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      await createGeofence({
+        tenantId: tenantAId,
+        name: 'Second',
+        ...AUSTIN,
+        radiusMeters: 500,
+      });
+      await registerDevice(tokenA, 'device-1');
+      await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(0),
+      });
+      const before = await prisma.geofenceDeviceState.findMany({
+        orderBy: { geofenceId: 'asc' },
+      });
+      await prisma.$executeRaw`ALTER TABLE "GeofenceDeviceState" ADD CONSTRAINT gf6_audit_failure CHECK ("state" <> 'OUTSIDE')`;
+      try {
+        await ingest(tokenA, {
+          deviceKey: 'device-1',
+          eventKey: 'constraint-failure',
+          coordinates: FAR,
+          observedAt: at(1),
+          expect: 500,
+        });
+        expect(
+          await prisma.geofenceDeviceState.findMany({
+            orderBy: { geofenceId: 'asc' },
+          }),
+        ).toEqual(before);
+        expect(
+          await prisma.locationEvent.count({
+            where: { eventKey: 'constraint-failure' },
+          }),
+        ).toBe(1);
+      } finally {
+        await prisma.$executeRaw`ALTER TABLE "GeofenceDeviceState" DROP CONSTRAINT gf6_audit_failure`;
+      }
+      const repaired = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        eventKey: 'constraint-failure',
+        coordinates: FAR,
+        observedAt: at(1),
+        expect: 200,
+      });
+      expect(repaired.geofenceTransitions).toHaveLength(2);
+      expect(
+        repaired.geofenceTransitions.every(
+          (row) => row.transition === 'EXIT' && row.stateAdvanced,
+        ),
+      ).toBe(true);
+    });
+
+    it.each(['replay', 'stale'] as const)(
+      'holds the %s conflict lock through the stored-state read',
+      async (kind) => {
+        const geofence = await createGeofence({
+          tenantId: tenantAId,
+          name: 'Depot',
+          ...AUSTIN,
+          radiusMeters: 250,
+        });
+        const deviceId = await registerDevice(tokenA, 'device-1');
+        const older = await ingest(tokenA, {
+          deviceKey: 'device-1',
+          coordinates: FAR,
+          observedAt: at(0),
+        });
+        const owner = await ingest(tokenA, {
+          deviceKey: 'device-1',
+          coordinates: AUSTIN,
+          observedAt: at(1),
+        });
+        const next = await prisma.locationEvent.create({
+          data: {
+            tenantId: tenantAId,
+            trackedDeviceId: deviceId,
+            eventKey: 'next',
+            observedAt: at(2),
+            ...FAR,
+            accuracyMeters: 5,
+          },
+        });
+        const inputId = kind === 'replay' ? owner.id : older.id;
+        let competing!: Promise<unknown>;
+        await prisma.$transaction(
+          async (tx) => {
+            const [holder] = await tx.$queryRaw<
+              Array<{ pid: number }>
+            >`SELECT pg_backend_pid() AS pid`;
+            const rows = await tx.$queryRaw<GeofenceTransitionRow[]>(
+              evaluateAndAdvanceStatement(inputId, tenantAId),
+            );
+            expect(rows[0].advancedTransition).toBeNull();
+            competing = app
+              .get(GeofenceTransitionService)
+              .evaluate(next.id, tenantAId);
+            const deadline = Date.now() + 4000;
+            for (;;) {
+              const [lock] = await prisma.$queryRaw<
+                Array<{ blocked: boolean }>
+              >`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND query LIKE '%WITH "evaluated" AS%'
+                  AND ${holder.pid}::integer = ANY(pg_blocking_pids(pid))
+              ) AS blocked
+            `;
+              if (lock.blocked) break;
+              if (Date.now() > deadline)
+                throw new Error('Writer did not block on resolved state');
+            }
+            const stored = await tx.$queryRaw<GeofenceStoredStateRow[]>(
+              storedStateStatement(inputId, tenantAId, [geofence.id]),
+            );
+            expect(stored).toEqual([
+              {
+                geofenceId: geofence.id,
+                lastLocationEventId: owner.id,
+                lastTransition: 'ENTER',
+              },
+            ]);
+          },
+          { timeout: 10000 },
+        );
+        await competing;
+        expect(
+          (await stateRow(tenantAId, deviceId, geofence.id))
+            ?.lastLocationEventId,
+        ).toBe(next.id);
+      },
+    );
+
+    it('does not recreate retired state while deactivation is committing', async () => {
+      const geofence = await createGeofence({
+        tenantId: tenantAId,
+        name: 'Depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      const deviceId = await registerDevice(tokenA, 'device-1');
+      const event = await prisma.locationEvent.create({
+        data: {
+          tenantId: tenantAId,
+          trackedDeviceId: deviceId,
+          eventKey: 'during-deactivation',
+          observedAt: at(0),
+          accuracyMeters: 5,
+          ...AUSTIN,
+        },
+      });
+      let release!: () => void;
+      let ready!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const locked = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      // The exact two mutations used by the API, paused before commit.
+      const deactivation = prisma.$transaction(
+        async (tx) => {
+          await tx.geofence.update({
+            where: { id: geofence.id, tenantId: tenantAId },
+            data: { isActive: false },
+          });
+          await tx.geofenceDeviceState.deleteMany({
+            where: { tenantId: tenantAId, geofenceId: geofence.id },
+          });
+          ready();
+          await gate;
+        },
+        { timeout: 10000 },
+      );
+      await locked;
+      let completed = false;
+      const evaluation = app
+        .get(GeofenceTransitionService)
+        .evaluate(event.id, tenantAId)
+        .finally(() => {
+          completed = true;
+        });
+      try {
+        const deadline = Date.now() + 4000;
+        while (!completed) {
+          const [row] = await prisma.$queryRaw<Array<{ blocked: boolean }>>`
+            SELECT EXISTS (
+              SELECT 1 FROM pg_stat_activity
+              WHERE datname = current_database()
+                AND query LIKE '%WITH "evaluated" AS%'
+                AND pid <> pg_backend_pid()
+                AND cardinality(pg_blocking_pids(pid)) > 0
+            ) AS blocked
+          `;
+          if (row.blocked) break;
+          if (Date.now() > deadline)
+            throw new Error('Evaluation never reached the lock barrier');
+        }
+      } finally {
+        release();
+        await deactivation;
+      }
+      expect(await evaluation).toEqual([]);
+      expect(await stateRow(tenantAId, deviceId, geofence.id)).toBeNull();
+      await request(server)
+        .patch(`/api/v1/geofences/${geofence.id}`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isActive: true })
+        .expect(200);
+      const next = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: FAR,
+        observedAt: at(1),
+      });
+      expect(transitionFor(next, geofence.id).transition).toBe(
+        'BASELINE_OUTSIDE',
+      );
+    });
+
+    it.each([1, 2, 3])(
+      'creates one state row under alternating concurrency (round %s)',
+      async () => {
+        const geofence = await createGeofence({
+          tenantId: tenantAId,
+          name: 'Depot',
+          ...AUSTIN,
+          radiusMeters: 250,
+        });
+        const deviceId = await registerDevice(tokenA, 'device-1');
+
+        const submissions = Array.from({ length: 8 }, (_unused, index) =>
+          request(server)
+            .post('/api/v1/location-events')
+            .set('Authorization', `Bearer ${tokenA}`)
+            .send({
+              deviceKey: 'device-1',
+              eventKey: `race-${index}`,
+              observedAt: at(index).toISOString(),
+              latitude: index % 2 === 0 ? AUSTIN.latitude : FAR.latitude,
+              longitude: AUSTIN.longitude,
+              accuracyMeters: 5,
+            }),
+        );
+
+        const responses = await Promise.all(submissions);
+        expect(responses.map((res) => res.status)).toEqual(
+          new Array(8).fill(201) as number[],
+        );
+
+        const rows = await prisma.geofenceDeviceState.findMany({
+          where: { tenantId: tenantAId, trackedDeviceId: deviceId },
+        });
+        expect(rows).toHaveLength(1);
+
+        // Whatever the interleaving, the newest observation owns the state.
+        const newest = responses
+          .map((res) => res.body as EventBody)
+          .reduce((latest, candidate) =>
+            Date.parse(candidate.observedAt) > Date.parse(latest.observedAt)
+              ? candidate
+              : latest,
+          );
+        expect(rows[0].lastLocationEventId).toBe(newest.id);
+        expect(rows[0].lastObservedAt.toISOString()).toBe(at(7).toISOString());
+        expect(rows[0].state).toBe('OUTSIDE');
+        expect(rows[0].geofenceId).toBe(geofence.id);
+      },
+    );
 
     it('resolves concurrent replays of one event to a single stored classification', async () => {
       const geofence = await createGeofence({
@@ -1338,7 +1793,7 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       expect(new Set(classifications)).toEqual(new Set(['BASELINE_INSIDE']));
     });
 
-    it('advances nothing when the transition statement fails', async () => {
+    it('advances nothing when the source event no longer exists', async () => {
       const geofence = await createGeofence({
         tenantId: tenantAId,
         name: 'Depot',
@@ -1354,8 +1809,7 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       });
       const before = await stateRow(tenantAId, deviceId, geofence.id);
 
-      // A source event that violates the state row's foreign key: the whole
-      // statement aborts, so no geofence in the set is left half-advanced.
+      // A deleted source event evaluates no geofences.
       const orphan = await prisma.locationEvent.create({
         data: {
           tenantId: tenantAId,
@@ -1415,6 +1869,23 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       } finally {
         await prisma.$executeRaw`ALTER TABLE "GeofenceDeviceState_hidden" RENAME TO "GeofenceDeviceState"`;
       }
+      const saved = await prisma.locationEvent.findFirstOrThrow({
+        where: { tenantId: tenantAId, eventKey: 'evt-broken' },
+      });
+      expect(await prisma.geofenceDeviceState.count()).toBe(0);
+      const repaired = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        eventKey: 'evt-broken',
+        coordinates: AUSTIN,
+        observedAt: at(0),
+        expect: 200,
+      });
+      expect(repaired.id).toBe(saved.id);
+      expect(repaired.replayed).toBe(true);
+      expect(repaired.geofenceTransitions[0]).toMatchObject({
+        transition: 'BASELINE_INSIDE',
+        stateAdvanced: true,
+      });
     });
   });
 
@@ -1484,25 +1955,68 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       ]);
     });
 
-    it('deletes state with the geofence, the device and the tenant', async () => {
-      const geofence = await createGeofence({
-        tenantId: tenantAId,
-        name: 'Depot',
-        ...AUSTIN,
-        radiusMeters: 250,
-      });
-      await registerDevice(tokenA, 'device-1');
-      await ingest(tokenA, {
-        deviceKey: 'device-1',
-        coordinates: AUSTIN,
-        observedAt: at(0),
-      });
-      expect(await prisma.geofenceDeviceState.count()).toBe(1);
-
-      await prisma.geofence.delete({ where: { id: geofence.id } });
-
-      expect(await prisma.geofenceDeviceState.count()).toBe(0);
-    });
+    it.each(['geofence', 'trackedDevice', 'tenant', 'locationEvent'] as const)(
+      'cascades %s deletion without deleting another tenant state',
+      async (target) => {
+        const disposableTenant = await prisma.tenant.create({
+          data: { name: 'Cascade target' },
+        });
+        const geofence = await createGeofence({
+          tenantId: disposableTenant.id,
+          name: 'Depot',
+          ...AUSTIN,
+          radiusMeters: 250,
+        });
+        const device = await prisma.trackedDevice.create({
+          data: {
+            tenantId: disposableTenant.id,
+            deviceKey: 'cascade',
+            name: 'Cascade',
+          },
+        });
+        const event = await prisma.locationEvent.create({
+          data: {
+            tenantId: disposableTenant.id,
+            trackedDeviceId: device.id,
+            eventKey: 'cascade',
+            observedAt: at(0),
+            ...AUSTIN,
+            accuracyMeters: 5,
+          },
+        });
+        await app
+          .get(GeofenceTransitionService)
+          .evaluate(event.id, disposableTenant.id);
+        const other = await createGeofence({
+          tenantId: tenantBId,
+          name: 'Survivor',
+          ...AUSTIN,
+          radiusMeters: 250,
+        });
+        const otherDevice = await registerDevice(tokenB, 'cascade');
+        await ingest(tokenB, {
+          deviceKey: 'cascade',
+          coordinates: AUSTIN,
+          observedAt: at(0),
+        });
+        const survivor = await stateRow(tenantBId, otherDevice, other.id);
+        expect(await prisma.geofenceDeviceState.count()).toBe(2);
+        if (target === 'geofence')
+          await prisma.geofence.delete({ where: { id: geofence.id } });
+        if (target === 'trackedDevice')
+          await prisma.trackedDevice.delete({ where: { id: device.id } });
+        if (target === 'tenant')
+          await prisma.tenant.delete({ where: { id: disposableTenant.id } });
+        if (target === 'locationEvent')
+          await prisma.locationEvent.delete({ where: { id: event.id } });
+        expect(await prisma.geofenceDeviceState.count()).toBe(1);
+        expect(await stateRow(tenantBId, otherDevice, other.id)).toEqual(
+          survivor,
+        );
+        if (target !== 'tenant')
+          await prisma.tenant.delete({ where: { id: disposableTenant.id } });
+      },
+    );
   });
 
   describe('phase boundary', () => {

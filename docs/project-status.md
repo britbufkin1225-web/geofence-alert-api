@@ -100,11 +100,11 @@ The backend currently supports:
 
 ## Current Testing State
 
-Current verified test status:
+Verified test state after GF-6 hardening:
 
 ```text
-Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
-Integration     Test Suites: 6 passed    Tests: 170 passed
+Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
+Integration     Test Suites: 8 passed    Tests: 263 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -141,9 +141,9 @@ Current test coverage includes:
 
 Upcoming development work includes:
 
-- Spatial evaluation and point-in-geofence logic
+- Dwell detection and polygon geofences
 - Alert domain planning
-- Location event workflow planning
+- Location-event history and query endpoints
 - Request and response examples for API documentation
 - Portfolio polish and screenshots
 
@@ -162,18 +162,16 @@ Upcoming development work includes:
 | Authentication (GF-2) | Complete |
 | Tenant isolation (GF-2) | Complete |
 | PostgreSQL/PostGIS foundation (GF-3) | Complete |
-| Location events (GF-4) | Implemented on feature branch |
-| Spatial evaluation | Next |
+| Location events (GF-4) | Complete |
+| Spatial evaluation (GF-5) | Complete |
+| Transition detection (GF-6) | Implemented on feature branch |
 | Alert workflow | Planned |
 | Documentation polish | In Progress |
 | Portfolio polish | Planned |
 
 ## Next Planned Phase
 
-**GF-5 — Deterministic point-in-circle geofence evaluation.**
+**GF-7 — Alert generation.**
 
-GF-5 is not started. It will build on the GF-4 ingestion path by computing
-containment for a stored location event against the caller tenant's active
-geofences with `ST_DWithin`, using the existing
-`Geofence_centerPoint_gist_idx`, as a pure synchronous read. Enter/exit
-transitions, alert records, and alert delivery remain deferred beyond it.
+GF-5 is merged and GF-6 transition detection is implemented on its feature
+branch. Alert generation and delivery remain unimplemented future work.

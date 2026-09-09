@@ -147,14 +147,23 @@ Because `state` always describes the observation carried by the request, a
 non-advancing entry's `state` is not necessarily the device's current persisted
 state.
 
+For stale input, `STAY_*` means **no crossing can be inferred**, not that the
+device historically remained on that side. OUTSIDE at T2 submitted after INSIDE
+at T3 returns `state: OUTSIDE`, `transition: STAY_OUTSIDE`, and `stateAdvanced:
+false`; stored state remains INSIDE at T3. Authoritative current state is not
+returned. Consumers must interpret these fields together.
+
 ## Idempotency
 
 Transition detection runs on both the create and the replay path of ingestion.
 
 - Replaying an event with the same `eventKey` and identical observation data
-  returns `200` with `replayed: true`, and each transition repeats the
-  classification that event originally produced, with `stateAdvanced: false`.
-  Nothing is written; even `updatedAt` on the state row is unchanged.
+  returns `200` with `replayed: true`. While that event still owns a geofence's
+  current-state row, its stored classification repeats with `stateAdvanced:
+  false`; even `updatedAt` is unchanged. Once superseded, it follows the stale
+  observation policy and its original classification cannot be recovered.
+  Replays evaluate the current geofence configuration and active set; this is
+  ingestion idempotency, not an immutable historical response.
 - Reusing an `eventKey` with **different** data is still a `409`, raised before
   transition detection runs. A conflicting replay never touches state.
 - Running detection on the replay path is deliberate: if a first attempt stored
@@ -163,6 +172,15 @@ Transition detection runs on both the create and the replay path of ingestion.
   already advanced state a no-op.
 
 ## Concurrency strategy
+
+Event creation commits before the separate transition transaction. A transition
+failure returns the sanitized HTTP 500 envelope but leaves the event stored.
+An identical retry can establish missing state and return `200`, `replayed:
+true`, and `stateAdvanced: true`. If a newer event already advanced state,
+the retry is stale and cannot reconstruct the omitted comparison. Without a
+retry, a stored event can remain unevaluated indefinitely. There is no automatic
+repair or shared ingestion/transition transaction. Concurrent original and replay
+requests may differ in which response reports advancement.
 
 Comparison and advancement are a **single `INSERT ... ON CONFLICT DO UPDATE`
 statement**. Reading the previous state and then writing the new one as two round
@@ -184,6 +202,16 @@ exactly the read the upsert exists to avoid trusting.
 
 No queue, worker, scheduler, advisory lock, retry loop or new dependency is
 involved.
+
+The conflicting state-row lock is retained until transaction completion even
+when the upsert's advancement guard is false. A third writer or deletion cannot
+interleave between the upsert and stored-state read for that row.
+
+Evaluated geofences are locked `FOR SHARE` in geofence-ID order until transaction
+completion. Either evaluation finishes before API retirement, or it waits and
+rechecks the active predicate after deactivation. This prevents an in-flight
+evaluation from recreating retired state after the deactivation's delete.
+Shared locks remain compatible with concurrent observations.
 
 ## Inactive and reactivated geofences
 
@@ -265,7 +293,7 @@ client that ignores the array is unaffected.
 | Field           | Meaning                                                              |
 | --------------- | -------------------------------------------------------------------- |
 | `state`         | Where **this** observation sits relative to the circle                |
-| `transition`    | How it classifies against the state that preceded it                  |
+| `transition`    | Accepted comparison, current-owner replay, or stale no-inference label |
 | `stateAdvanced` | Whether this observation became the device's newest accepted state    |
 | `geofenceId` / `name` | Geofence identity                                              |
 | `radiusMeters` / `distanceMeters` | The same GF-5 values, by the same rounding rule  |
@@ -304,6 +332,12 @@ notified.
 
 ## Validation
 
+The table includes GF-6 hardening, including both lifecycle lock interleavings,
+replay/stale conflict locks, real failure/retry recovery, and all four cascade
+paths. Full TypeScript checking still reports the two pre-existing TS2345 errors
+in `src/auth/auth.http.spec.ts` at lines 71 and 73; baseline Git-object compilation
+reproduces both errors. The build, lint, and tests below pass.
+
 Run against the disposable PostgreSQL/PostGIS stack:
 
 ```bash
@@ -319,9 +353,9 @@ npm run test:db
 | `npm run build`                                                                                                          | clean                     |
 | `npm test`                                                                                                               | 16 suites, 387 tests      |
 | `npm run test:e2e`                                                                                                       | 1 suite, 1 test           |
-| `npx jest --config test/jest-integration.json --runInBand`                                                               | 8 suites, 251 tests       |
+| `npx jest --config test/jest-integration.json --runInBand`                                                               | 8 suites, 263 tests       |
 | `npx jest --runInBand --runTestsByPath src/location-events/geofence-transition.service.spec.ts`                          | 31 tests                  |
-| `npx jest --config test/jest-integration.json --runInBand --runTestsByPath test/integration/geofence-transition.integration-spec.ts` | 42 tests      |
+| `npx jest --config test/jest-integration.json --runInBand --runTestsByPath test/integration/geofence-transition.integration-spec.ts` | 54 tests      |
 
 Database-backed behavior is never mocked: classification, boundary semantics,
 ordering, stale rejection, tenant isolation, the reactivation policy and the

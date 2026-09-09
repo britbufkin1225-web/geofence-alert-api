@@ -95,9 +95,9 @@ This project demonstrates how a backend system can organize geofence data, recei
 
 **Planned:**
 
-- Location event tracking
+- Location-event history and query endpoints
 - Alert workflow support
-- Spatial evaluation (containment, enter/exit) on top of the GF-3 foundation
+- Dwell detection and polygon geofences
 
 ## Tech Stack
 
@@ -401,18 +401,18 @@ Current test coverage includes:
 - Unknown-field / mass-assignment rejection and the stable error contract
 - No internal error-detail leakage on failure paths
 
-Current verified test state:
+Verified test state after GF-6 hardening:
 
 ```text
-Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
-Integration     Test Suites: 6 passed    Tests: 170 passed
+Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
+Integration     Test Suites: 8 passed    Tests: 263 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
 Additional planned testing includes:
 
 - Alert workflow behavior
-- Location-event processing
+- Future alert delivery and dwell processing
 
 ## Roadmap
 

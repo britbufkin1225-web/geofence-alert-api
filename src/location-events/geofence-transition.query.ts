@@ -86,6 +86,11 @@ export interface GeofenceTransitionQueryResult {
  * Every value is a bound parameter; no identifier, coordinate or id is
  * interpolated into the statement text.
  *
+ * Geofence rows are share-locked in ID order before advancement. Deactivation
+ * must either retire state after this transaction or finish first, in which
+ * case the locking read rechecks isActive. Without this lock, an evaluation
+ * could recreate state after the deactivation transaction's delete.
+ *
  * Exported so tests can plan and read exactly this statement.
  */
 export function evaluateAndAdvanceStatement(
@@ -109,6 +114,8 @@ export function evaluateAndAdvanceStatement(
        AND "geofence"."isActive" = TRUE
       WHERE "event"."id" = ${locationEventId}
         AND "event"."tenantId" = ${tenantId}
+      ORDER BY "geofence"."id"
+      FOR SHARE OF "geofence"
     ),
     "advanced" AS (
       INSERT INTO "GeofenceDeviceState" (
@@ -175,7 +182,8 @@ export function evaluateAndAdvanceStatement(
  * Issued as a separate statement, after the upsert and inside the same
  * transaction, on purpose: a common-table expression would see the snapshot the
  * statement began with, which is exactly the read the upsert exists to avoid
- * trusting. A fresh statement observes whatever a concurrent writer committed.
+ * trusting. The upsert retains conflicting-row locks even when its advancement
+ * guard is false; another writer cannot change those rows before this read.
  *
  * The device is joined from the event rather than passed in, so this read cannot
  * be aimed at another device, and the tenant predicate is explicit on both

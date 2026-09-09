@@ -192,22 +192,28 @@ Semantics:
 - Ordered by ascending distance, then ascending `geofenceId` — the same total
   order GF-5 uses. `distanceMeters` follows the same millimeter rounding rule.
 - Containment is GF-5's, unchanged and boundary-inclusive.
-- `state` describes **this** observation. `transition` classifies it against the
-  state that preceded it. `stateAdvanced` says whether this observation became the
-  device's newest accepted state.
+- `state` describes **this** observation, not necessarily stored current state.
+  `stateAdvanced` says whether it advanced stored state in this call. For stale
+  input, `STAY_*` means no crossing can be inferred; it does not prove the device
+  remained on that side. Authoritative current state is not returned.
 - The first accepted observation for a device and geofence is a `BASELINE_*`, not
   an `ENTER` or `EXIT`. So is the first one after a geofence is re-enabled.
 - Ordering is by `observedAt`, tie-broken by event id; server receipt time is
   never used. An older observation cannot regress state and never reports a
-  crossing. A replay repeats the classification it originally produced and
-  advances nothing.
-- Deactivating a geofence produces no `EXIT` and retires its transition state.
+  crossing. A replay repeats its stored classification only while it still owns
+  the current-state row; a superseded replay follows the stale policy.
+- API deactivation produces no `EXIT` and retires its transition state, serialized
+  with in-flight evaluation. Direct database writes bypass API retirement.
+- Event creation and transition detection use separate transactions. A detection
+  failure returns 500 but leaves the event stored. An identical retry may repair
+  missing state (`200`, `replayed: true`, `stateAdvanced: true`); if superseded,
+  it cannot reconstruct the missing comparison. No automatic retry exists.
 
 | `transition` | Meaning |
 | --- | --- |
 | `BASELINE_INSIDE` / `BASELINE_OUTSIDE` | First accepted observation for this device and geofence |
 | `ENTER` / `EXIT` | Boundary crossed since the previous accepted observation |
-| `STAY_INSIDE` / `STAY_OUTSIDE` | No crossing |
+| `STAY_INSIDE` / `STAY_OUTSIDE` | Same containment when advancing; no crossing inference for stale input |
 
 ```json
 {

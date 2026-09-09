@@ -97,9 +97,9 @@ export class GeofenceTransitionService {
    *   it is not evidence that the device crossed anything, and the state it
    *   would have to be compared against belongs to a later observation.
    *
-   * The `stored` row can be missing only if a concurrent deactivation retired it
-   * between the two statements; that falls into the second case, which claims no
-   * crossing either.
+   * Conflicting-row locks protect the stored-state read through transaction
+   * completion. A missing row is a defensive fallback, not an expected
+   * deactivation interleaving.
    */
   private classify(
     row: GeofenceTransitionRow,
