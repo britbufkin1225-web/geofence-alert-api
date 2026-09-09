@@ -20,14 +20,15 @@ export interface GeofenceMatchRow {
 /**
  * Slack added to the bounding prefilter, in meters.
  *
- * The prefilter must never exclude a geofence the authoritative predicate would
- * accept. `ST_DWithin` and `ST_Distance` do not agree to the last bit (see
- * `containmentStatement`), and `ST_DWithin` is the stricter of the two, so a
- * prefilter set exactly at the maximum radius could drop a geofence whose radius
- * sits at that maximum and whose distance is within a nanometer of it. One meter
- * of slack is many orders of magnitude larger than that disagreement while
- * remaining negligible against the 5 km ceiling: it widens the index probe's
- * bounding box and nothing else.
+ * For Point/Point geography on PostGIS 3.4.3, ST_Distance rounds its spheroid
+ * result to 10 nm (100 nm without PROJ_GEODESIC). ST_DWithin either accepts
+ * early when its spherical estimate is below 95% of the bound, or compares
+ * the same spheroid calculation without that rounding. The early branch
+ * cannot reject a match. The remaining rounding difference is below 0.000001 m
+ * at the 5 km ceiling, so one meter safely covers it at every valid latitude.
+ * This argument depends on Point geography and the pinned PostGIS behavior,
+ * not on assuming sphere and spheroid distances differ by less than a meter.
+ * See docs/gf5-independent-audit.md for source references and grid evidence.
  */
 export const CONTAINMENT_PREFILTER_MARGIN_METERS = 1;
 
@@ -63,16 +64,15 @@ export const CONTAINMENT_PREFILTER_METERS =
  *   out afterwards.
  *
  * Why `ST_Distance(...) <= "radiusMeters"` and not `ST_DWithin(...)` as the
- * authoritative predicate: for geography operands the two do not agree at the
- * boundary. `ST_DWithin` computes its own, very slightly larger distance, so on
- * PostGIS 3.4 `ST_DWithin(a, b, ST_Distance(a, b))` returns FALSE — measured at
- * roughly 5e-10 m over a 250 m separation, and reproduced by the integration
- * suite so the behavior is pinned rather than assumed. Using `ST_DWithin` as the
- * decision would therefore exclude a point sitting exactly on the configured
- * radius and would let the response contradict itself, reporting a distance
- * equal to the radius for a geofence it had just excluded. `ST_Distance` decides
- * containment and computes the returned value, so the two can never disagree and
- * `distance <= radius` holds exactly.
+ * authoritative predicate: ST_Distance rounds internally at nanometer scale,
+ * while ST_DWithin can compare the underlying unrounded spheroid distance.
+ * At the Austin 250 m fixture, these are 250 and 250.00000000049803 meters,
+ * respectively. Thus ST_DWithin excludes a radius equal to ST_Distance.
+ * Using the latter for both the predicate and selected raw distance preserves
+ * boundary-inclusive semantics in terms of the public PostGIS measurement.
+ * Neither function is universally stricter: rounding can go either way.
+ * The service subsequently rounds only the displayed distance to millimeters;
+ * that display value can exceed an unrounded radius by half a millimeter.
  *
  * Index posture: `ST_DWithin` remains in the statement as a bounding prefilter,
  * because it is the form PostGIS can answer from `Geofence_centerPoint_gist_idx`

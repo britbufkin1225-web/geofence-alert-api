@@ -120,9 +120,9 @@ Timezone-free timestamps, impossible calendar dates, numeric strings, `NaN`,
 Implemented locally on the `phase-gf-5-deterministic-point-in-circle-evaluation`
 branch; **not merged**.
 
-| Method | Endpoint | Purpose | Status |
-| --- | --- | --- | --- |
-| GET | `/api/v1/location-events/:locationEventId/geofence-evaluation` | Which active geofences of the caller's tenant contain one stored observation | Complete (local) |
+| Method | Endpoint                                                       | Purpose                                                                      | Status           |
+| ------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------- |
+| GET    | `/api/v1/location-events/:locationEventId/geofence-evaluation` | Which active geofences of the caller's tenant contain one stored observation | Complete (local) |
 
 Requires a Bearer token. The tenant comes from the verified principal; the only
 input is the path identifier, which must be a valid `cuid` (`400` otherwise). The
@@ -137,10 +137,13 @@ Semantics:
   radius and the returned distance are in **meters** on the WGS 84 spheroid, not
   degrees.
 - Containment is **boundary-inclusive**: `distance <= radiusMeters` is inside.
-- `matches` is ordered deterministically by ascending `distanceMeters`, then by
-  ascending `geofenceId`.
+- `matches` is ordered by ascending distance before output rounding, then by
+  ascending `geofenceId` for exact distance ties. Distinct distances that round
+  to the same displayed number retain their original distance order.
 - `distanceMeters` is rounded to three decimal places (millimeters) for output
-  only; the containment decision uses the unrounded value.
+  only; the containment decision uses the unrounded PostGIS value. JSON numbers
+  omit trailing zeros. A rounded distance may exceed an unrounded radius by up
+  to half a millimeter; this does not mean the observation is outside.
 - The evaluation is **synchronous and read-only**. It stores no result and has no
   downstream effect.
 

@@ -37,8 +37,9 @@ export interface GeofenceMatchDto {
 
   /**
    * Geodesic distance from the observation to the circle center, in meters,
-   * computed by PostGIS and rounded for serialization only. Containment is
-   * boundary-inclusive, so this value is always `<= radiusMeters`.
+   * computed by PostGIS and rounded for serialization only. The pre-rounding
+   * distance is <= radiusMeters; rounding may put this display value up to
+   * half a millimeter above an unrounded radius.
    */
   distanceMeters: number;
 }

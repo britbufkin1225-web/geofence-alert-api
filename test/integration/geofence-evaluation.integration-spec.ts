@@ -279,6 +279,53 @@ describe('GF-5 geofence evaluation (real PostgreSQL/PostGIS integration)', () =>
   });
 
   describe('spatial correctness', () => {
+    it.each([
+      ['equator', { latitude: 0, longitude: 0 }],
+      ['mid-latitude', AUSTIN],
+      ['Oslo', { latitude: 59.9139, longitude: 10.7522 }],
+      ['antimeridian', { latitude: 0, longitude: 179.9999 }],
+      ['near-pole', { latitude: 89.9995, longitude: 30 }],
+    ])(
+      'checks fixed boundaries and the maximum radius at %s',
+      async (_, center) => {
+        const small = await createGeofence({
+          tenantId: tenantAId,
+          name: 'Fixed 250 m',
+          ...center,
+          radiusMeters: 250,
+        });
+        const maximum = await createGeofence({
+          tenantId: tenantAId,
+          name: 'Maximum radius',
+          ...center,
+          radiusMeters: GEOFENCE_RADIUS_MAX_METERS,
+        });
+        // Independent forward geodesic construction; neither radius nor expected
+        // membership is assigned from the production distance expression.
+        for (const distance of [
+          0, 120, 249.999, 250, 250.001, 4999.999, 5000, 5000.001,
+        ]) {
+          const event = await createEvent(
+            tenantAId,
+            deviceAId,
+            await project(center, distance, 90),
+          );
+          expect(await measuredDistance(small.id, event.id)).toBeCloseTo(
+            distance,
+            6,
+          );
+          const body = (await evaluate(tokenA, event.id).expect(200))
+            .body as EvaluationBody;
+          const ids = body.matches.map((match) => match.geofenceId);
+          expect(ids.includes(small.id)).toBe(distance <= 250);
+          expect(ids.includes(maximum.id)).toBe(
+            distance <= GEOFENCE_RADIUS_MAX_METERS,
+          );
+          expect(body.matchCount).toBe(ids.length);
+        }
+      },
+    );
+
     it('matches an observation at the exact geofence center', async () => {
       const event = await createEvent(tenantAId, deviceAId, AUSTIN);
       const geofence = await createGeofence({
@@ -534,6 +581,24 @@ describe('GF-5 geofence evaluation (real PostgreSQL/PostGIS integration)', () =>
   });
 
   describe('filtering and isolation', () => {
+    it('ignores forged query, header and body principals against the real database', async () => {
+      const event = await createEvent(tenantAId, deviceAId, AUSTIN);
+      await createGeofence({
+        tenantId: tenantBId,
+        name: 'Foreign coincident circle',
+        ...AUSTIN,
+        radiusMeters: 500,
+      });
+      const expected = await evaluate(tokenA, event.id).expect(200);
+      const forged = await evaluate(tokenA, event.id)
+        .query({ tenantId: tenantBId, latitude: 0, unknown: 'ignored' })
+        .set('X-Tenant-Id', tenantBId)
+        .send({ tenantId: tenantBId, principal: { tenantId: tenantBId } })
+        .expect(200);
+      expect(forged.body).toEqual(expected.body);
+      expect((forged.body as EvaluationBody).matchCount).toBe(0);
+    });
+
     it('matches an active geofence of the caller tenant', async () => {
       const event = await createEvent(tenantAId, deviceAId, AUSTIN);
       const active = await createGeofence({
@@ -677,6 +742,34 @@ describe('GF-5 geofence evaluation (real PostgreSQL/PostGIS integration)', () =>
   });
 
   describe('response behavior', () => {
+    it('preserves raw ordering and containment when display rounding crosses the radius', async () => {
+      const event = await createEvent(tenantAId, deviceAId, AUSTIN);
+      const near = await createGeofence({
+        id: TIE_GEOFENCE_B,
+        tenantId: tenantAId,
+        name: 'Near with larger id',
+        ...(await project(AUSTIN, 100.0006, 90)),
+        radiusMeters: 100.0008,
+      });
+      const far = await createGeofence({
+        id: TIE_GEOFENCE_A,
+        tenantId: tenantAId,
+        name: 'Far with smaller id',
+        ...(await project(AUSTIN, 100.0007, 90)),
+        radiusMeters: 100.0008,
+      });
+      const body = (await evaluate(tokenA, event.id).expect(200))
+        .body as EvaluationBody;
+      expect(body.matches.map((match) => match.geofenceId)).toEqual([
+        near.id,
+        far.id,
+      ]);
+      for (const match of body.matches) {
+        expect(match.distanceMeters).toBe(100.001);
+        expect(match.distanceMeters).toBeGreaterThan(match.radiusMeters);
+      }
+    });
+
     it('orders multiple matches by ascending distance', async () => {
       const event = await createEvent(tenantAId, deviceAId, AUSTIN);
 
@@ -932,14 +1025,32 @@ describe('GF-5 geofence evaluation (real PostgreSQL/PostGIS integration)', () =>
       // The prefilter is only a safe superset while the database guarantees no
       // radius exceeds GEOFENCE_RADIUS_MAX_METERS. If a future migration raises
       // the cap, this fails instead of the query silently dropping matches.
-      const rows = await prisma.$queryRaw<Array<{ definition: string }>>`
-        SELECT pg_get_constraintdef(oid) AS "definition"
+      const rows = await prisma.$queryRaw<
+        Array<{ definition: string; validated: boolean }>
+      >`
+        SELECT pg_get_constraintdef(oid) AS "definition",
+               convalidated AS "validated"
         FROM pg_constraint
         WHERE conname = 'Geofence_radiusMeters_max_check'
+          AND conrelid = '"Geofence"'::regclass
       `;
 
-      expect(rows).toHaveLength(1);
-      expect(rows[0].definition).toContain(String(GEOFENCE_RADIUS_MAX_METERS));
+      // Substring matching accepts 15000 as proof of a 5000 cap. Pin the
+      // complete, validated constraint on the actual production table instead.
+      expect(rows).toEqual([
+        {
+          definition: `CHECK (("radiusMeters" <= (${GEOFENCE_RADIUS_MAX_METERS})::double precision))`,
+          validated: true,
+        },
+      ]);
+      await expect(
+        createGeofence({
+          tenantId: tenantAId,
+          name: 'Above database maximum',
+          ...AUSTIN,
+          radiusMeters: GEOFENCE_RADIUS_MAX_METERS + 0.001,
+        }),
+      ).rejects.toThrow();
     });
 
     it('plans the containment statement against the geofence GiST index', async () => {
