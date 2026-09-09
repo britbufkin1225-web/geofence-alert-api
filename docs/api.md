@@ -88,7 +88,8 @@ event with the same `eventKey` already existed (`"replayed": true`). Reusing an
 stored event. A `deviceKey` the caller's tenant does not own returns the same
 `404` as one that exists nowhere. An inactive device returns `409`.
 
-GF-4 records observations only — no geofence evaluation, transitions, or alerts.
+GF-4 records observations only. Evaluating a stored observation against the
+tenant's geofences is GF-5, below.
 
 ### Tracked device request body limits
 
@@ -113,6 +114,66 @@ Timezone-free timestamps, impossible calendar dates, numeric strings, `NaN`,
 `Infinity`, and unknown or server-owned properties (`tenantId`, `id`,
 `trackedDeviceId`, `receivedAt`, `createdAt`, `observedPoint`) are rejected with
 `400`.
+
+## Geofence Evaluation Endpoint (GF-5, local only)
+
+Implemented locally on the `phase-gf-5-deterministic-point-in-circle-evaluation`
+branch; **not merged**.
+
+| Method | Endpoint                                                       | Purpose                                                                      | Status           |
+| ------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------- |
+| GET    | `/api/v1/location-events/:locationEventId/geofence-evaluation` | Which active geofences of the caller's tenant contain one stored observation | Complete (local) |
+
+Requires a Bearer token. The tenant comes from the verified principal; the only
+input is the path identifier, which must be a valid `cuid` (`400` otherwise). The
+endpoint accepts no coordinate, radius, tenant, device, active-status, ordering
+or pagination parameter — it evaluates the point already stored on the named
+event, never coordinates supplied with the request.
+
+Semantics:
+
+- Only **active** geofences belonging to the caller's own tenant are considered.
+- Containment is evaluated by PostgreSQL/PostGIS over `geography` values, so the
+  radius and the returned distance are in **meters** on the WGS 84 spheroid, not
+  degrees.
+- Containment is **boundary-inclusive**: `distance <= radiusMeters` is inside.
+- `matches` is ordered by ascending distance before output rounding, then by
+  ascending `geofenceId` for exact distance ties. Distinct distances that round
+  to the same displayed number retain their original distance order.
+- `distanceMeters` is rounded to three decimal places (millimeters) for output
+  only; the containment decision uses the unrounded PostGIS value. JSON numbers
+  omit trailing zeros. A rounded distance may exceed an unrounded radius by up
+  to half a millimeter; this does not mean the observation is outside.
+- The evaluation is **synchronous and read-only**. It stores no result and has no
+  downstream effect.
+
+An event that falls outside every geofence is a success, not an error: `200` with
+`"matches": []` and `"matchCount": 0`. A `locationEventId` belonging to another
+tenant returns the same `404` as one that exists nowhere.
+
+```json
+{
+  "locationEventId": "clx1a2b3c4d5e6f7g8h9i0j1k",
+  "trackedDeviceId": "clx9z8y7x6w5v4u3t2s1r0q9p",
+  "observedAt": "2026-09-09T06:00:00.000Z",
+  "latitude": 30.2672,
+  "longitude": -97.7431,
+  "matches": [
+    {
+      "geofenceId": "clx0000000000000000000001",
+      "name": "Warehouse Zone",
+      "latitude": 30.2672,
+      "longitude": -97.743,
+      "radiusMeters": 500,
+      "distanceMeters": 9.652
+    }
+  ],
+  "matchCount": 1
+}
+```
+
+Enter/exit/dwell transitions, persisted evaluation results, alerts and
+notification delivery are **not** part of GF-5 and remain future work.
 
 ---
 

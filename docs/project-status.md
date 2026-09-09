@@ -19,8 +19,17 @@ merged.** It adds tenant-owned tracked devices, an authenticated ingestion
 endpoint with database-enforced idempotency, and the same generated spatial point
 representation for observations.
 
-Spatial evaluation and alerting remain planned future work. Neither GF-3 nor GF-4
-issues a spatial query — GF-4 records observations only.
+**GF-5 — deterministic point-in-circle geofence evaluation — is implemented
+locally on the `phase-gf-5-deterministic-point-in-circle-evaluation` feature
+branch and is not merged.** It adds one authenticated, read-only endpoint that
+answers which active geofences of the caller's tenant contain one already-stored
+location event. Containment is decided by PostgreSQL/PostGIS over `geography`
+values, so it is boundary-inclusive and measured in meters, and matches are
+ordered deterministically by distance then geofence id.
+
+Transitions (enter/exit/dwell), persisted evaluation state, alerting and
+notification delivery remain planned future work. GF-5 determines spatial
+membership for one observation and has no downstream effect.
 
 ## Completed Work
 
@@ -51,6 +60,8 @@ issues a spatial query — GF-4 records observations only.
 - Added an authenticated location-event ingestion endpoint with database-enforced
   idempotency and a documented replay-versus-conflict contract (GF-4)
 - Added strict ISO-8601 instant parsing with a bounded future-clock allowance (GF-4)
+- Added deterministic, read-only point-in-circle geofence evaluation for a stored
+  location event, decided by PostGIS geography semantics (GF-5)
 
 ## Current Backend Capabilities
 
@@ -71,6 +82,8 @@ The backend currently supports:
 - Ingesting authenticated device location observations
 - Replaying identical submissions and rejecting conflicting, cross-tenant and
   inactive-device submissions
+- Evaluating one stored observation against the caller tenant's active geofences,
+  boundary-inclusive and in meters, with deterministic ordering
 - Running Jest-based unit tests and real-database integration tests
 
 ## Current Testing State
