@@ -2,11 +2,11 @@ import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsNotEmpty,
-  IsOptional,
   IsString,
   Matches,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 import { trim } from '../../common/transforms/trim.transform';
@@ -43,7 +43,7 @@ export class CreateTrackedDeviceDto {
   @MaxLength(DEVICE_NAME_MAX_LENGTH)
   name!: string;
 
-  @IsOptional()
+  @ValidateIf((_object, value: unknown) => value !== undefined)
   @IsBoolean()
   isActive?: boolean;
 }

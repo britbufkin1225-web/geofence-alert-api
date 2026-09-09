@@ -1,6 +1,6 @@
 import { ConflictException, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 
+import { isPrismaUniqueConstraint } from '../common/prisma-unique-constraint';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTrackedDeviceDto } from './dto/create-tracked-device.dto';
 
@@ -30,12 +30,14 @@ export class TrackedDevicesService {
         },
       });
     } catch (error) {
-      // The unique constraint is (tenantId, deviceKey), so this can only ever
-      // mean "this tenant already registered that key". It cannot be triggered
-      // by, and discloses nothing about, another tenant's devices.
+      // Only the tenant/key index means that this device key is registered.
+      // Primary-key collisions and unknown metadata remain server errors.
       if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
+        isPrismaUniqueConstraint(
+          error,
+          'TrackedDevice',
+          'TrackedDevice_tenantId_deviceKey_key',
+        )
       ) {
         throw new ConflictException('Device key already registered');
       }

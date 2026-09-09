@@ -37,8 +37,8 @@ iterating after `npm run test:db -- --keep`.
 ## Current Verified Test State
 
 ```text
-Unit + HTTP     Test Suites: 13 passed   Tests: 274 passed
-Integration     Test Suites: 6 passed    Tests: 167 passed
+Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
+Integration     Test Suites: 6 passed    Tests: 170 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -71,8 +71,9 @@ E2E             Test Suites: 1 passed    Tests: 1 passed
     idempotency contract, cross-tenant and cross-device key scoping, and
     concurrent duplicate submissions.
   - `location-event-database.integration-spec.ts` — the GF-4 schema itself:
-    generated `observedPoint`, `timestamptz` round-tripping under a hostile
-    session time zone, coordinate/accuracy/`NaN`/identifier CHECK constraints,
+    generated `observedPoint`, database instant preservation under a hostile
+    session time zone and Prisma UTC connection enforcement,
+    coordinate/accuracy/`NaN`/identifier CHECK constraints,
     the composite foreign key that binds event tenant to device tenant, cascade
     behavior, the idempotency unique index, and the deliberate absence of a
     spatial index on `LocationEvent`.

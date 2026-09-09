@@ -396,8 +396,8 @@ Current test coverage includes:
 Current verified test state:
 
 ```text
-Unit + HTTP     Test Suites: 13 passed   Tests: 274 passed
-Integration     Test Suites: 6 passed    Tests: 167 passed
+Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
+Integration     Test Suites: 6 passed    Tests: 170 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 

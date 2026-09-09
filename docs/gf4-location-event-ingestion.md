@@ -3,10 +3,11 @@
 Phase note for the first secure, persistent ingestion path for tenant-owned
 device location events.
 
-**Status: implemented locally, validation completed, ready for independent
-audit.** GF-4 is not merged, not deployed, and not operationally proven.
+**Status: implemented and independently hardened locally.** GF-4 is not merged,
+not deployed, and not operationally proven.
 
-GF-4 records trustworthy location observations. It performs **no** geofence
+GF-4 records authenticated, validated location observations; it does not verify
+the physical truth of client-reported coordinates. It performs **no** geofence
 evaluation: no point-in-circle test, no `ST_DWithin`, no enter/exit/dwell
 transitions, no alerts, no background processing. See
 [Deferred functionality](#deferred-functionality).
@@ -115,7 +116,8 @@ actively misleading about which identifier space they belong to.
   (`findUnique({ where: { tenantId_deviceKey: { tenantId, deviceKey } } })`), not
   a global read followed by an ownership comparison.
 - A key owned by **another** tenant and a key that exists **nowhere** produce a
-  byte-identical `404 Tracked device not found`. Ingestion cannot be used to
+  identical `404 Tracked device not found` responses apart from the response
+  timestamp. Ingestion cannot be used to
   discover which device keys other tenants use.
 - **Inactive devices cannot ingest.** Deactivation is how a tenant stops
   accepting data from a device, so an inactive device is refused with
@@ -211,6 +213,14 @@ UTC designator (`Z`) or numeric offset (`±HH:MM`).
   `timestamp`; for a value supplied by an external source with its own clock and
   offset, preserving the instant exactly is part of the contract.)
 
+Application connections are pinned to UTC. The installed `@prisma/adapter-pg`
+7.8.0 parser replaces non-UTC offsets without adjusting the clock time; the
+audit reproduced a 14-hour read error. UTC connection startup options avoid
+that adapter defect, including when the URL requests a different timezone.
+Application SQL must not change the session timezone. The database itself
+preserves the instant under other zones, verified using epoch reads inside a
+transaction; Prisma round-tripping is verified on the pinned UTC connection.
+
 ---
 
 ## Accuracy semantics
@@ -221,9 +231,8 @@ UTC designator (`Z`) or numeric offset (`±HH:MM`).
   accuracy as non-negative, and a source that considers its fix exact — or a
   simulated source — legitimately reports `0`. Rejecting it would force clients
   to lie.
-- The 100 km ceiling is the point past which an observation cannot say anything
-  about a geofence, whose own radius may not exceed 5 km. An accuracy that large
-  is a malfunctioning source, not a usable measurement.
+- The 100 km ceiling is the chosen ingestion policy, not a geometric theorem
+  or proof that a source is malfunctioning.
 - Accuracy is **metadata only** in GF-4. Nothing evaluates, filters, or branches
   on it.
 
@@ -263,11 +272,16 @@ the absolute instant.
 ### Concurrency
 
 The service reads first (the ordinary retry-after-lost-response case is cheaper
-and quieter as a read), then creates, then catches Prisma `P2002` and re-reads
+and quieter as a read), then creates, then catches Prisma `P2002` only for the
+exact `LocationEvent_tenantId_trackedDeviceId_eventKey_key` index and re-reads
 the winning row. The database, not the application, decides which concurrent
 submission wins; the loser is then answered with the same replay-or-conflict
 rule, so the outcome does not depend on timing. Eight simultaneous identical
 submissions produce exactly one `201`, seven `200`s, and one stored row.
+
+Other unique violations or missing constraint metadata propagate as sanitized
+server errors. Registration similarly recognizes only the tenant/device-key
+index, not the device primary key.
 
 ---
 
@@ -316,10 +330,11 @@ from a future worker, a `psql` session, or a bad migration is still bounded:
 | `TrackedDevice_tenantId_fkey` | Device tenant must exist; `ON DELETE CASCADE` |
 | `observedPoint` generated column | Spatial value cannot diverge from the scalars |
 
-The `NaN` exclusions are explicit because IEEE-754 `NaN` compares `false` against
-every bound, so a bare `>= 0 AND <= 100000` would silently admit it through a
-direct SQL write. The same gap exists on the GF-3 `Geofence` coordinate
-constraints; changing those is not a GF-4 change and was left alone.
+The explicit `NaN` exclusions are defense in depth. PostgreSQL orders `NaN`
+above finite numbers, so the upper range bounds already reject it. Direct SQL
+audit probes disproved the reported GF-3 coordinate gap on both `Geofence` and
+`AlertEvent`. No GF-3 migration was changed; the original GF-4 migration's
+incorrect NaN comments remain historical text, not the database contract.
 
 Indexes: `TrackedDevice_tenantId_idx` and
 `LocationEvent_tenantId_trackedDeviceId_observedAt_idx` (the tenant-scoped device
@@ -337,7 +352,7 @@ timeline later phases read).
 | `409` | Inactive device, or `eventKey` reused with different observation data |
 | `201` / `200` | Created / replayed |
 
-All responses use the existing non-leaky shape
+Error responses use the existing non-leaky shape
 `{ statusCode, error, message, path, timestamp }`. Prisma codes, SQL, stack
 traces, and filesystem paths never reach a client.
 
@@ -347,11 +362,11 @@ traces, and filesystem paths never reach a client.
 
 | Suite | File | Count |
 | --- | --- | --- |
-| Validator unit | `src/common/validators/strict-iso-date-time.spec.ts` | 46 |
-| Service unit | `src/location-events/location-events.service.spec.ts` | 20 |
-| HTTP contract | `src/location-events/location-events.http.spec.ts` | 87 |
+| Validator unit | `src/common/validators/strict-iso-date-time.spec.ts` | 60 |
+| Service unit | `src/location-events/location-events.service.spec.ts` | 23 |
+| HTTP contract | `src/location-events/location-events.http.spec.ts` | 93 |
 | Real-database ingestion | `test/integration/location-event-ingestion.integration-spec.ts` | 41 |
-| Real-database structure/constraints | `test/integration/location-event-database.integration-spec.ts` | 41 |
+| Real-database structure/constraints | `test/integration/location-event-database.integration-spec.ts` | 44 |
 
 Covered: anonymous / malformed / expired / revoked-membership authentication;
 cross-tenant device keys and non-disclosure; ownership-injection attempts;
@@ -361,7 +376,8 @@ future skew and back-dating; identifier emptiness, whitespace, length and
 charset; unknown and protected properties; first write, identical replay,
 conflicting replay, cross-tenant and cross-device key scoping, and concurrent
 duplicates; database-level constraint, foreign-key, cascade and catalog checks;
-and `timestamptz` round-tripping under a hostile session time zone.
+and database instant preservation under a hostile session time zone, with
+Prisma connections pinned to UTC to work around the adapter defect.
 
 ---
 

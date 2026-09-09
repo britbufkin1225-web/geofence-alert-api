@@ -44,10 +44,18 @@ const storedEvent = {
   accuracyMeters: 8.5,
 };
 
-function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
+function uniqueViolation(
+  index = 'LocationEvent_tenantId_trackedDeviceId_eventKey_key',
+): Prisma.PrismaClientKnownRequestError {
   return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
     code: 'P2002',
     clientVersion: 'test',
+    meta: {
+      modelName: 'LocationEvent',
+      driverAdapterError: {
+        cause: { kind: 'UniqueConstraintViolation', constraint: { index } },
+      },
+    },
   });
 }
 
@@ -60,7 +68,7 @@ describe('LocationEventsService', () => {
   };
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -251,6 +259,29 @@ describe('LocationEventsService', () => {
   });
 
   describe('concurrent duplicate submissions', () => {
+    it.each(['LocationEvent_pkey', 'some_other_unique_index'])(
+      'does not classify %s as a replay even when a matching row exists',
+      async (index) => {
+        prisma.locationEvent.findUnique
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(storedEvent);
+        const error = uniqueViolation(index);
+        prisma.locationEvent.create.mockRejectedValue(error);
+        await expect(service.ingest(validDto, TENANT_A)).rejects.toBe(error);
+        expect(prisma.locationEvent.findUnique).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('fails closed when P2002 has no constraint metadata', async () => {
+      const error = new Prisma.PrismaClientKnownRequestError('Unknown unique', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+      prisma.locationEvent.create.mockRejectedValue(error);
+      await expect(service.ingest(validDto, TENANT_A)).rejects.toBe(error);
+      expect(prisma.locationEvent.findUnique).toHaveBeenCalledTimes(1);
+    });
+
     it('re-reads the winning row and reports a replay', async () => {
       prisma.locationEvent.findUnique
         .mockResolvedValueOnce(null)
@@ -261,6 +292,16 @@ describe('LocationEventsService', () => {
 
       expect(result.replayed).toBe(true);
       expect(result.id).toBe(EVENT_ID);
+      expect(result.receivedAt).toEqual(storedEvent.receivedAt);
+      expect(prisma.locationEvent.findUnique).toHaveBeenNthCalledWith(2, {
+        where: {
+          tenantId_trackedDeviceId_eventKey: {
+            tenantId: TENANT_A,
+            trackedDeviceId: DEVICE_ID,
+            eventKey: validDto.eventKey,
+          },
+        },
+      });
     });
 
     it('reports a conflict when the winning row holds different data', async () => {

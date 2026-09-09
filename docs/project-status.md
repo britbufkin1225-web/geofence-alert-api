@@ -69,7 +69,8 @@ The backend currently supports:
 - Enforcing coordinate, radius, ownership and name rules in the database
 - Registering tenant-owned tracked devices
 - Ingesting authenticated device location observations
-- Rejecting duplicate, conflicting, cross-tenant and inactive-device submissions
+- Replaying identical submissions and rejecting conflicting, cross-tenant and
+  inactive-device submissions
 - Running Jest-based unit tests and real-database integration tests
 
 ## Current Testing State
@@ -77,8 +78,8 @@ The backend currently supports:
 Current verified test status:
 
 ```text
-Unit + HTTP     Test Suites: 13 passed   Tests: 274 passed
-Integration     Test Suites: 6 passed    Tests: 167 passed
+Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
+Integration     Test Suites: 6 passed    Tests: 170 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 

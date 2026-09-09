@@ -28,6 +28,10 @@ describe('parseStrictIsoDateTime', () => {
       ['2026-09-09T06:00:00.000Z', '2026-09-09T06:00:00.000Z'],
       ['2026-09-09T06:00:00Z', '2026-09-09T06:00:00.000Z'],
       ['2026-09-09T06:00:00.5Z', '2026-09-09T06:00:00.500Z'],
+      ['2026-09-09T06:00:00.05Z', '2026-09-09T06:00:00.050Z'],
+      ['2000-02-29T00:00:00Z', '2000-02-29T00:00:00.000Z'],
+      ['2026-09-09T23:59:00+23:59', '2026-09-09T00:00:00.000Z'],
+      ['2026-09-09T00:00:00-23:59', '2026-09-09T23:59:00.000Z'],
       // Offsets resolve to the same absolute instant as their UTC equivalent.
       ['2026-09-09T08:00:00.000+02:00', '2026-09-09T06:00:00.000Z'],
       ['2026-09-09T01:00:00.000-05:00', '2026-09-09T06:00:00.000Z'],
@@ -51,6 +55,7 @@ describe('parseStrictIsoDateTime', () => {
       // Calendar dates that do not exist. new Date() rolls these forward.
       ['2026-02-30T00:00:00.000Z'],
       ['2025-02-29T00:00:00.000Z'],
+      ['1900-02-29T00:00:00Z'],
       ['2026-04-31T00:00:00.000Z'],
       ['2026-13-01T00:00:00.000Z'],
       ['2026-00-10T00:00:00.000Z'],
@@ -62,9 +67,12 @@ describe('parseStrictIsoDateTime', () => {
       ['2026-09-09T06:00:60.000Z'],
       // Out-of-range offsets.
       ['2026-09-09T06:00:00.000+25:00'],
+      ['2026-09-09T06:00:00+24:00'],
+      ['2026-09-09T06:00:00-24:00'],
       ['2026-09-09T06:00:00.000+02:60'],
       // Precision beyond what the column stores.
       ['2026-09-09T06:00:00.000000Z'],
+      [`2026-09-09T06:00:00.${'0'.repeat(10000)}Z`],
       // Non-ISO formats that Date happily accepts.
       ['September 9, 2026 06:00:00 UTC'],
       ['2026/09/09 06:00:00'],
@@ -102,6 +110,28 @@ describe('parseStrictIsoDateTime', () => {
 });
 
 describe('IsStrictIsoDateTime / IsNotBeyondFutureSkew', () => {
+  beforeEach(() => {
+    jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-09T06:00:00Z'));
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    '2026-09-09T06:05:00Z',
+    '2026-09-09T08:05:00+02:00',
+    '2026-09-09T01:05:00-05:00',
+  ])('accepts the exact five-minute boundary as %s', (value) => {
+    expect(constraintsFor(value)).toEqual([]);
+  });
+
+  it.each([
+    '2026-09-09T06:05:00.001Z',
+    '2026-09-09T08:05:00.001+02:00',
+    '2026-09-09T01:05:00.001-05:00',
+  ])('rejects one millisecond beyond the boundary as %s', (value) => {
+    expect(constraintsFor(value)).toEqual(['isNotBeyondFutureSkew']);
+  });
+
   it('accepts a valid instant in the past', () => {
     expect(constraintsFor('2026-09-09T06:00:00.000Z')).toEqual([]);
   });

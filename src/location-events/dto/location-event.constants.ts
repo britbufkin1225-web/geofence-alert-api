@@ -21,10 +21,8 @@ export const LOCATION_EVENT_LONGITUDE_MAX = 180;
  * simulated source) legitimately reports 0. Rejecting it would force clients to
  * lie.
  *
- * The 100 km ceiling is the point past which an observation cannot say anything
- * about a geofence, whose own radius may not exceed 5 km — an accuracy that
- * large is a malfunctioning source, not a usable measurement. Accuracy is
- * recorded as metadata in GF-4; nothing evaluates or filters on it yet.
+ * The 100 km ceiling is ingestion policy, not a geometric guarantee. Accuracy
+ * is recorded as metadata in GF-4; nothing evaluates or filters on it yet.
  */
 export const LOCATION_EVENT_ACCURACY_MIN_METERS = 0;
 export const LOCATION_EVENT_ACCURACY_MAX_METERS = 100_000;

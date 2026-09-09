@@ -341,6 +341,25 @@ describe('Location event ingestion (HTTP)', () => {
   });
 
   describe('coordinate validation', () => {
+    it.each(['latitude', 'longitude', 'accuracyMeters'])(
+      'rejects JSON numeric overflow in %s',
+      async (field) => {
+        for (const value of ['1e400', '-1e400']) {
+          const body = JSON.stringify({
+            ...validBody,
+            [field]: 'OVERFLOW',
+          }).replace('"OVERFLOW"', value);
+          await request(server)
+            .post('/api/v1/location-events')
+            .set('Authorization', authHeader)
+            .set('Content-Type', 'application/json')
+            .send(body)
+            .expect(400);
+        }
+        expect(mockPrisma.locationEvent.create).not.toHaveBeenCalled();
+      },
+    );
+
     it.each([
       ['latitude below -90', { latitude: -90.000001 }],
       ['latitude above 90', { latitude: 90.000001 }],
@@ -597,6 +616,35 @@ describe('Tracked device registration (HTTP)', () => {
     expect(mockPrisma.trackedDevice.create).not.toHaveBeenCalled();
   });
 
+  it('rejects registration after membership deletion before calling the service', async () => {
+    mockPrisma.membership.findFirst.mockResolvedValue(null);
+    await post(validDevice).expect(401);
+    expect(mockPrisma.trackedDevice.create).not.toHaveBeenCalled();
+  });
+
+  it('does not report a primary-key collision as a duplicate device key', async () => {
+    mockPrisma.trackedDevice.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('secret SQL constraint path', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: {
+          modelName: 'TrackedDevice',
+          driverAdapterError: {
+            cause: {
+              kind: 'UniqueConstraintViolation',
+              constraint: { index: 'TrackedDevice_pkey' },
+            },
+          },
+        },
+      }),
+    );
+    const res = await post(validDevice).expect(500);
+    expect((res.body as ErrorBody).message).toBe('Internal server error');
+    expect(JSON.stringify(res.body)).not.toMatch(
+      /secret|P2002|TrackedDevice_pkey/,
+    );
+  });
+
   it('registers a device owned by the authenticated tenant', async () => {
     const res = await post(validDevice).expect(201);
 
@@ -629,6 +677,7 @@ describe('Tracked device registration (HTTP)', () => {
     ['an oversized name', { name: 'n'.repeat(121) }],
     ['a deviceKey with a space', { deviceKey: 'device 001' }],
     ['a non-boolean isActive', { isActive: 'yes' }],
+    ['a null isActive', { isActive: null }],
     ['an unknown property', { hacker: true }],
   ])('rejects %s', async (_label, override) => {
     await post({ ...validDevice, ...override }).expect(400);
@@ -640,6 +689,15 @@ describe('Tracked device registration (HTTP)', () => {
       new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
         code: 'P2002',
         clientVersion: 'test',
+        meta: {
+          modelName: 'TrackedDevice',
+          driverAdapterError: {
+            cause: {
+              kind: 'UniqueConstraintViolation',
+              constraint: { index: 'TrackedDevice_tenantId_deviceKey_key' },
+            },
+          },
+        },
       }),
     );
 

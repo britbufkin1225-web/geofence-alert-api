@@ -271,14 +271,14 @@ Deliberate decisions:
 - `AlertEvent` string columns carry no length bound, because no endpoint reads or
   writes them yet and there is no contract to align with. Bounds arrive with the
   alert workflow.
-- The GF-4 `LocationEvent` checks exclude IEEE-754 `NaN` **explicitly**, because
-  `NaN` compares `false` against every bound, so a bare range check would admit
-  it through a direct SQL write. The same gap exists on the GF-3 `Geofence` and
-  `AlertEvent` coordinate checks; closing it there is not a GF-4 change and is
-  recorded here as known, outstanding work.
-- `LocationEvent.accuracyMeters` allows `0` (sources that consider a fix exact
-  legitimately report it) and caps at 100000 metres, past which an observation
-  cannot say anything about a geofence whose own radius may not exceed 5000.
+- The GF-4 `LocationEvent` checks exclude `NaN` explicitly as defense in depth.
+  PostgreSQL sorts `NaN` above finite values, so the existing upper range bounds
+  already reject it, including on GF-3 `Geofence` and `AlertEvent` coordinates.
+  The previously reported GF-3 NaN gap was disproved by direct SQL audit probes;
+  no historical migration change is needed. The GF-4 migration's original NaN
+  commentary is inaccurate and is preserved to keep migration bytes unchanged.
+- `LocationEvent.accuracyMeters` allows `0` and caps at 100000 metres as ingestion
+  policy. Accuracy is metadata only; GF-4 draws no containment conclusion from it.
 
 ## Migration history
 

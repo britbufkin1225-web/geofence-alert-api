@@ -4,8 +4,9 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { LocationEvent, Prisma } from '@prisma/client';
+import { LocationEvent } from '@prisma/client';
 
+import { isPrismaUniqueConstraint } from '../common/prisma-unique-constraint';
 import { parseStrictIsoDateTime } from '../common/validators/strict-iso-date-time.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLocationEventDto } from './dto/create-location-event.dto';
@@ -67,7 +68,13 @@ export class LocationEventsService {
 
       return this.toResponse(created, device.deviceKey, false);
     } catch (error) {
-      if (!this.isUniqueViolation(error)) {
+      if (
+        !isPrismaUniqueConstraint(
+          error,
+          'LocationEvent',
+          'LocationEvent_tenantId_trackedDeviceId_eventKey_key',
+        )
+      ) {
         throw error;
       }
 
@@ -154,13 +161,6 @@ export class LocationEventsService {
     }
 
     return this.toResponse(existing, deviceKey, true);
-  }
-
-  private isUniqueViolation(error: unknown): boolean {
-    return (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    );
   }
 
   private toResponse(

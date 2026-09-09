@@ -1,4 +1,5 @@
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { isPrismaUniqueConstraint } from '../../src/common/prisma-unique-constraint';
 import { createPrismaService, truncateAll } from './support/database';
 
 /**
@@ -216,20 +217,56 @@ describe('GF-4 location-event database layer (disposable PostgreSQL/PostGIS)', (
       ]);
     });
 
-    it('round-trips an instant unchanged regardless of session time zone', async () => {
+    it('preserves the database instant under a hostile session time zone', async () => {
       await insertEvent({ id: 'tz-roundtrip' });
 
       // Read the same row back under a deliberately hostile session zone. A
       // `timestamp without time zone` column would shift here; timestamptz does
       // not, which is why the column type was chosen.
-      await prisma.$executeRaw`SET LOCAL TIME ZONE 'Pacific/Kiritimati'`;
-      const stored = await prisma.locationEvent.findUniqueOrThrow({
-        where: { id: 'tz-roundtrip' },
+      const epoch = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL TIME ZONE 'Pacific/Kiritimati'`;
+        const [zone] = await tx.$queryRaw<Array<{ zone: string }>>`
+          SELECT current_setting('TimeZone') AS zone
+        `;
+        expect(zone.zone).toBe('Pacific/Kiritimati');
+        // Read epoch rather than using adapter-pg's broken non-UTC timestamptz
+        // parser. Application connections are separately pinned to UTC below.
+        const [row] = await tx.$queryRaw<Array<{ epoch: number }>>`
+          SELECT (EXTRACT(EPOCH FROM "observedAt") * 1000)::float8 AS epoch
+          FROM "LocationEvent" WHERE id = 'tz-roundtrip'
+        `;
+        return row.epoch;
       });
 
-      expect(stored.observedAt.toISOString()).toBe(
-        VALID.observedAt.toISOString(),
-      );
+      expect(epoch).toBe(VALID.observedAt.getTime());
+    });
+
+    it('pins Prisma connections to UTC even with a hostile URL timezone', async () => {
+      await insertEvent({ id: 'utc-adapter' });
+      const originalUrl = process.env.DATABASE_URL!;
+      const url = new URL(originalUrl);
+      url.searchParams.set('options', '-c timezone=Pacific/Kiritimati');
+      let isolated: PrismaService;
+      try {
+        process.env.DATABASE_URL = url.toString();
+        isolated = new PrismaService();
+      } finally {
+        process.env.DATABASE_URL = originalUrl;
+      }
+      try {
+        const [zone] = await isolated.$queryRaw<Array<{ zone: string }>>`
+          SELECT current_setting('TimeZone') AS zone
+        `;
+        expect(zone.zone).toBe('UTC');
+        const stored = await isolated.locationEvent.findUniqueOrThrow({
+          where: { id: 'utc-adapter' },
+        });
+        expect(stored.observedAt.toISOString()).toBe(
+          VALID.observedAt.toISOString(),
+        );
+      } finally {
+        await isolated.$disconnect();
+      }
     });
   });
 
@@ -264,9 +301,9 @@ describe('GF-4 location-event database layer (disposable PostgreSQL/PostGIS)', (
       ).resolves.toBe(1);
     });
 
-    it('rejects NaN coordinates that pass ordinary range comparisons', async () => {
-      // NaN compares false against every bound, so a bare BETWEEN check would
-      // have admitted these rows.
+    it('explicitly rejects NaN coordinates', async () => {
+      // PostgreSQL orders NaN above finite values, so the upper range bound
+      // also rejects it. This checks the explicit finite constraint.
       //
       // The literals are written into the static SQL rather than bound as
       // parameters because the driver marshals a JavaScript NaN to SQL NULL,
@@ -392,6 +429,19 @@ describe('GF-4 location-event database layer (disposable PostgreSQL/PostGIS)', (
   });
 
   describe('ownership integrity', () => {
+    it('rejects tenant disagreement through Prisma unchecked create', async () => {
+      await expect(
+        prisma.locationEvent.create({
+          data: {
+            tenantId: otherTenantId,
+            trackedDeviceId: deviceId,
+            eventKey: 'unchecked-mismatch',
+            ...VALID,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'P2003' });
+    });
+
     it('rejects an event whose tenant disagrees with its device tenant', async () => {
       // The composite foreign key makes this structurally impossible rather
       // than merely prevented by the service layer.
@@ -449,6 +499,33 @@ describe('GF-4 location-event database layer (disposable PostgreSQL/PostGIS)', (
   });
 
   describe('idempotency constraint', () => {
+    it('distinguishes real adapter idempotency and primary-key violations', async () => {
+      const data = {
+        tenantId,
+        trackedDeviceId: deviceId,
+        eventKey: 'adapter',
+        ...VALID,
+      };
+      const created = await prisma.locationEvent.create({ data });
+      const collision = async (input: typeof data & { id?: string }) => {
+        try {
+          await prisma.locationEvent.create({ data: input });
+          throw new Error('Expected a database collision');
+        } catch (error) {
+          expect(error).toMatchObject({ code: 'P2002' });
+          return isPrismaUniqueConstraint(
+            error,
+            'LocationEvent',
+            'LocationEvent_tenantId_trackedDeviceId_eventKey_key',
+          );
+        }
+      };
+      expect(await collision(data)).toBe(true);
+      expect(
+        await collision({ ...data, id: created.id, eventKey: 'different' }),
+      ).toBe(false);
+    });
+
     it('rejects a duplicate (tenant, device, eventKey) triple', async () => {
       await insertEvent({ id: 'dup-1', eventKey: 'same-key' });
 

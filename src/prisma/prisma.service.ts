@@ -24,7 +24,15 @@ export class PrismaService
     // PostgreSQL driver adapter. The connection string is never logged: Prisma
     // errors surface through the global exception filter, which does not expose
     // driver internals to API clients.
-    super({ adapter: new PrismaPg({ connectionString }) });
+    // adapter-pg 7.8 normalizes timestamptz offsets by replacing them with UTC
+    // without shifting the wall time. GF-4 uses timestamptz, so every application
+    // connection must return UTC, regardless of database/role/URL defaults.
+    const url = new URL(connectionString);
+    url.searchParams.set(
+      'options',
+      `${url.searchParams.get('options') ?? ''} -c timezone=UTC`.trim(),
+    );
+    super({ adapter: new PrismaPg({ connectionString: url.toString() }) });
   }
 
   async onModuleInit() {
