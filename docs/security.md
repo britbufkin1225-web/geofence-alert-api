@@ -68,6 +68,28 @@ compliance document.
   and the update payload can never contain `tenantId`, so ownership cannot be
   reassigned (mass-assignment safe).
 
+## Location-event ingestion scoping (GF-4)
+
+- Tracked devices are resolved by a tenant-qualified unique lookup
+  (`tenantId_deviceKey`), never by a global read followed by an ownership check.
+  A `deviceKey` owned by another tenant returns the identical `404` as one that
+  exists nowhere, so ingestion cannot be used to enumerate other tenants' device
+  keys.
+- The event's tenant is the principal's, never the body's, never inferred from
+  the submitted device key, and never taken from the idempotency key.
+- Ownership is additionally **structural**: `LocationEvent` carries a composite
+  foreign key onto `TrackedDevice(id, tenantId)`, so PostgreSQL rejects any event
+  whose tenant disagrees with its device's tenant even if a future code path got
+  it wrong.
+- The idempotency uniqueness constraint is `(tenantId, trackedDeviceId,
+  eventKey)`, so one tenant's event key can never collide with or disclose
+  another's.
+- A deactivated device is refused with `409`. That status is only reachable by a
+  caller who already owns the device, so it discloses nothing across the tenant
+  boundary.
+
+Full contract: [gf4-location-event-ingestion.md](gf4-location-event-ingestion.md).
+
 ## Cross-tenant object policy
 
 - A geofence that exists but belongs to another tenant is reported as
@@ -95,7 +117,8 @@ compliance document.
 
 - Public: `/health`, `/status`, `GET /api/v1` (static banner), `auth/register`,
   `auth/login`.
-- Protected (Bearer): `auth/me`, `/api/v1/db/status`, and all geofence routes.
+- Protected (Bearer): `auth/me`, `/api/v1/db/status`, all geofence routes, and
+  the GF-4 `tracked-devices` / `location-events` routes.
 - The guard is registered globally, so any route added later is authenticated by
   default (fail-closed) unless explicitly marked `@Public()`.
 

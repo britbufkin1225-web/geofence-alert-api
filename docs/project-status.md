@@ -9,14 +9,18 @@ functional geofence domain module (CRUD, DTO validation, pagination, status
 filtering, summary reporting) plus user identity, bcrypt password
 authentication, JWT sessions, and strict per-tenant isolation (GF-2).
 
-Persistence is **PostgreSQL with PostGIS** (GF-3, on the
-`phase-gf-3-postgresql-postgis-spatial-foundation` feature branch — not merged).
-Circle geofences store a canonical `geography(Point, 4326)` centre, maintained by
-a database generated column and indexed with GiST, alongside
-database-enforced CHECK constraints.
+Persistence is **PostgreSQL with PostGIS** (GF-3, merged). Circle geofences store
+a canonical `geography(Point, 4326)` centre, maintained by a database generated
+column and indexed with GiST, alongside database-enforced CHECK constraints.
 
-Spatial evaluation, location-event ingestion, and alerting remain planned future
-work. GF-3 delivers the storage foundation only — it adds no spatial queries.
+**GF-4 — authenticated location-event ingestion — is implemented locally on the
+`phase-gf-4-authenticated-location-event-ingestion` feature branch and is not
+merged.** It adds tenant-owned tracked devices, an authenticated ingestion
+endpoint with database-enforced idempotency, and the same generated spatial point
+representation for observations.
+
+Spatial evaluation and alerting remain planned future work. Neither GF-3 nor GF-4
+issues a spatial query — GF-4 records observations only.
 
 ## Completed Work
 
@@ -43,6 +47,10 @@ work. GF-3 delivers the storage foundation only — it adds no spatial queries.
 - Added database CHECK constraints for coordinates, radius, and required names
 - Aligned Docker Compose with a pinned PostGIS image and a health check
 - Added a disposable PostgreSQL/PostGIS migration and integration test workflow
+- Added tenant-owned tracked devices and persistent location events (GF-4)
+- Added an authenticated location-event ingestion endpoint with database-enforced
+  idempotency and a documented replay-versus-conflict contract (GF-4)
+- Added strict ISO-8601 instant parsing with a bounded future-clock allowance (GF-4)
 
 ## Current Backend Capabilities
 
@@ -59,6 +67,10 @@ The backend currently supports:
 - Validating request bodies and query parameters
 - Storing a canonical spatial centre for every circle geofence
 - Enforcing coordinate, radius, ownership and name rules in the database
+- Registering tenant-owned tracked devices
+- Ingesting authenticated device location observations
+- Replaying identical submissions and rejecting conflicting, cross-tenant and
+  inactive-device submissions
 - Running Jest-based unit tests and real-database integration tests
 
 ## Current Testing State
@@ -66,8 +78,8 @@ The backend currently supports:
 Current verified test status:
 
 ```text
-Unit + HTTP     Test Suites: 10 passed   Tests: 121 passed
-Integration     Test Suites: 4 passed    Tests: 85 passed
+Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
+Integration     Test Suites: 6 passed    Tests: 170 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -91,12 +103,19 @@ Current test coverage includes:
 - `/api/v1` routing, the auth guard, and unversioned `/health` and `/status`
 - Unknown-field / mass-assignment rejection and the stable error contract
 - No internal error-detail leakage on failure paths
+- Location-event ingestion (GF-4): authentication matrix, server-derived tenant,
+  cross-tenant device non-disclosure, inactive-device refusal, coordinate /
+  timestamp / accuracy / identifier validation boundaries, and the idempotent
+  replay-versus-conflict contract including concurrent duplicates
+- GF-4 database layer: generated `observedPoint`, `timestamptz` instant
+  preservation, CHECK constraints (including `NaN`), the composite foreign key
+  binding event tenant to device tenant, cascade behavior, and the idempotency
+  unique index
 
 ## Known Planned Work
 
 Upcoming development work includes:
 
-- GF-4: authenticated location-event ingestion
 - Spatial evaluation and point-in-geofence logic
 - Alert domain planning
 - Location event workflow planning
@@ -117,18 +136,19 @@ Upcoming development work includes:
 | Unit testing | Complete |
 | Authentication (GF-2) | Complete |
 | Tenant isolation (GF-2) | Complete |
-| PostgreSQL/PostGIS foundation (GF-3) | Implemented on feature branch |
-| Location events (GF-4) | Next |
-| Spatial evaluation | Planned |
+| PostgreSQL/PostGIS foundation (GF-3) | Complete |
+| Location events (GF-4) | Implemented on feature branch |
+| Spatial evaluation | Next |
 | Alert workflow | Planned |
 | Documentation polish | In Progress |
 | Portfolio polish | Planned |
 
 ## Next Planned Phase
 
-**GF-4 — Authenticated Location-Event Ingestion.**
+**GF-5 — Deterministic point-in-circle geofence evaluation.**
 
-GF-4 is not started. It will build on the GF-3 storage foundation by accepting
-authenticated location events for tracked devices. Spatial evaluation
-(`ST_DWithin` containment), enter/exit transitions, and alert records remain
-deferred beyond it.
+GF-5 is not started. It will build on the GF-4 ingestion path by computing
+containment for a stored location event against the caller tenant's active
+geofences with `ST_DWithin`, using the existing
+`Geofence_centerPoint_gist_idx`, as a pure synchronous read. Enter/exit
+transitions, alert records, and alert delivery remain deferred beyond it.

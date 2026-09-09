@@ -37,8 +37,8 @@ iterating after `npm run test:db -- --keep`.
 ## Current Verified Test State
 
 ```text
-Unit + HTTP     Test Suites: 10 passed   Tests: 121 passed
-Integration     Test Suites: 4 passed    Tests: 85 passed
+Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
+Integration     Test Suites: 6 passed    Tests: 170 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -65,6 +65,18 @@ E2E             Test Suites: 1 passed    Tests: 1 passed
   - `tenant-isolation.integration-spec.ts` — the full GF-2 tenant-boundary
     matrix, ported unchanged from SQLite to PostgreSQL, plus anonymous-access
     denial.
+  - `location-event-ingestion.integration-spec.ts` — the GF-4 ingestion path
+    end-to-end: server-derived tenant, cross-tenant device non-disclosure,
+    inactive-device refusal, scalar/spatial synchronization, the 201/200/409
+    idempotency contract, cross-tenant and cross-device key scoping, and
+    concurrent duplicate submissions.
+  - `location-event-database.integration-spec.ts` — the GF-4 schema itself:
+    generated `observedPoint`, database instant preservation under a hostile
+    session time zone and Prisma UTC connection enforcement,
+    coordinate/accuracy/`NaN`/identifier CHECK constraints,
+    the composite foreign key that binds event tenant to device tenant, cascade
+    behavior, the idempotency unique index, and the deliberate absence of a
+    spatial index on `LocationEvent`.
 
 ### Disposable test database
 
@@ -119,11 +131,15 @@ all layers; `npm test` alone does not validate tenant isolation on PostgreSQL.
 - `/api/v1` routing and unversioned public `/health` and `/status`
 - Unknown-field / mass-assignment rejection and the stable, non-leaky error contract
 
+- Location-event ingestion (GF-4): authentication matrix, tenant derivation,
+  device resolution and non-disclosure, coordinate/timestamp/accuracy/identifier
+  validation boundaries, mass-assignment rejection, idempotent replay versus
+  conflict, and database-enforced ingestion constraints
+
 ## Planned Test Coverage
 
 Additional planned test coverage includes:
 
-- Location-event ingestion (GF-4)
 - Spatial containment / `ST_DWithin` evaluation
 - Enter/exit transition behavior
 - Alert workflow behavior

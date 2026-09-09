@@ -69,6 +69,51 @@ return `400`. A valid-but-unknown id returns `404`, **as does a valid id that
 belongs to another tenant** — the API does not disclose the existence of
 resources outside the caller's tenant.
 
+## Tracked Device and Location Event Endpoints (GF-4)
+
+Both require a Bearer token and operate only within the caller's tenant. Full
+contract in [gf4-location-event-ingestion.md](gf4-location-event-ingestion.md).
+
+| Method | Endpoint | Purpose | Status |
+| --- | --- | --- | --- |
+| POST | `/api/v1/tracked-devices` | Register a location source owned by the caller's tenant | Complete |
+| POST | `/api/v1/location-events` | Ingest one observation from one of those devices | Complete |
+
+`POST /api/v1/tracked-devices` is registration only — the minimum needed to make
+ingestion reachable. There is no list, read, update, deactivate or delete route.
+
+Ingestion returns `201` when the event was stored and `200` when an identical
+event with the same `eventKey` already existed (`"replayed": true`). Reusing an
+`eventKey` with different observation data returns `409` and never overwrites the
+stored event. A `deviceKey` the caller's tenant does not own returns the same
+`404` as one that exists nowhere. An inactive device returns `409`.
+
+GF-4 records observations only — no geofence evaluation, transitions, or alerts.
+
+### Tracked device request body limits
+
+| Field | Rule |
+| --- | --- |
+| `deviceKey` | Required string, trimmed, 1–128 chars, `[A-Za-z0-9._:-]+`, unique per tenant |
+| `name` | Required string, trimmed, 1–120 chars, not blank |
+| `isActive` | Optional boolean, default `true` |
+
+### Location event request body limits
+
+| Field | Rule |
+| --- | --- |
+| `deviceKey` | Required; must name a device the caller's tenant owns and has not deactivated |
+| `eventKey` | Required string, trimmed, 1–200 chars, `[A-Za-z0-9._:-]+`; idempotency key |
+| `observedAt` | Required ISO-8601 instant with explicit `Z` or `±HH:MM` offset; at most 5 minutes ahead of the server clock; no lower bound |
+| `latitude` | Number in `-90`…`90` (inclusive) |
+| `longitude` | Number in `-180`…`180` (inclusive) |
+| `accuracyMeters` | Number in `0`…`100000` meters (inclusive) |
+
+Timezone-free timestamps, impossible calendar dates, numeric strings, `NaN`,
+`Infinity`, and unknown or server-owned properties (`tenantId`, `id`,
+`trackedDeviceId`, `receivedAt`, `createdAt`, `observedPoint`) are rejected with
+`400`.
+
 ---
 
 ## Query Parameters
