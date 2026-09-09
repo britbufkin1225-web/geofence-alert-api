@@ -90,6 +90,29 @@ compliance document.
 
 Full contract: [gf4-location-event-ingestion.md](gf4-location-event-ingestion.md).
 
+## Geofence transition state (GF-6)
+
+- `GeofenceDeviceState` is keyed on `(tenantId, trackedDeviceId, geofenceId)`, so
+  the identity a caller's observation resolves to is always tenant-qualified.
+- All three of its foreign keys are composite on `(id, tenantId)`, onto
+  `Geofence`, `TrackedDevice` and `LocationEvent`. PostgreSQL rejects any state
+  row whose tenant disagrees with its geofence, device or source event, so
+  cross-tenant state is structurally impossible rather than merely avoided by
+  the query predicates — which also carry the tenant.
+- The device is derived from the stored event, never supplied by the caller, so
+  transition detection cannot be aimed at another device.
+- Both statements bind every value as a parameter. No identifier, coordinate or
+  tenant id is interpolated into statement text.
+- Comparison and advancement are one atomic `INSERT ... ON CONFLICT DO UPDATE`,
+  ordered by the source's `observedAt` with the event id as tie-break, so a
+  concurrent, out-of-order or replayed submission cannot regress state or
+  fabricate a crossing.
+- Two tenants may use the same external `deviceKey` and place geofences at
+  identical coordinates without their state ever meeting.
+
+Full contract:
+[gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
+
 ## Cross-tenant object policy
 
 - A geofence that exists but belongs to another tenant is reported as

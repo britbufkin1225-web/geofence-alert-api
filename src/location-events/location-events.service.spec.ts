@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLocationEventDto } from './dto/create-location-event.dto';
+import { GeofenceTransitionService } from './geofence-transition.service';
 import { LocationEventsService } from './location-events.service';
 
 const TENANT_A = 'ctenantaaaaaaaaaaaaaaaaaa';
@@ -67,6 +68,13 @@ describe('LocationEventsService', () => {
     locationEvent: { findUnique: jest.fn(), create: jest.fn() },
   };
 
+  // GF-6 transition detection is a collaborator here, not the subject. Its own
+  // classification, ordering and concurrency behavior are proven against real
+  // PostgreSQL/PostGIS in
+  // test/integration/geofence-transition.integration-spec.ts; these tests only
+  // assert how ingestion calls it and what it contributes to the response.
+  const geofenceTransitions = { evaluate: jest.fn() };
+
   beforeEach(async () => {
     jest.resetAllMocks();
 
@@ -74,6 +82,7 @@ describe('LocationEventsService', () => {
       providers: [
         LocationEventsService,
         { provide: PrismaService, useValue: prisma },
+        { provide: GeofenceTransitionService, useValue: geofenceTransitions },
       ],
     }).compile();
 
@@ -82,6 +91,7 @@ describe('LocationEventsService', () => {
     prisma.trackedDevice.findUnique.mockResolvedValue(activeDevice);
     prisma.locationEvent.findUnique.mockResolvedValue(null);
     prisma.locationEvent.create.mockResolvedValue(storedEvent);
+    geofenceTransitions.evaluate.mockResolvedValue([]);
   });
 
   describe('device resolution', () => {
@@ -192,6 +202,7 @@ describe('LocationEventsService', () => {
         longitude: -97.7431,
         accuracyMeters: 8.5,
         replayed: false,
+        geofenceTransitions: [],
       });
     });
 

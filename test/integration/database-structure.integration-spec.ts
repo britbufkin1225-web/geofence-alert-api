@@ -46,6 +46,7 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
         '20260908110000_audit_contract_hardening',
         '20260909063002_tracked_devices_and_location_events',
         '20260909063100_location_event_spatial_constraints',
+        '20260909120000_geofence_device_transition_state',
       ]);
       expect(rows.every((row) => row.finished)).toBe(true);
       expect(rows.some((row) => row.rolled_back)).toBe(false);

@@ -26,6 +26,33 @@ enum AlertStatus {
   RESOLVED
 }
 
+// Where one device stood relative to one circle at one observation (GF-6).
+//
+// Two explicit values rather than a boolean: this is a wire-visible domain
+// state, and `"state": "INSIDE"` cannot be misread the way `"inside": true`
+// beside a `transition` field can. The boundary belongs to INSIDE, because GF-5
+// decides containment with `ST_Distance(...) <= "radiusMeters"`.
+enum GeofenceContainmentState {
+  INSIDE
+  OUTSIDE
+}
+
+// How the containment state of one device changed for one geofence (GF-6).
+//
+// BASELINE_* is what the first accepted observation for a device/geofence pair
+// produces. It is deliberately distinct from ENTER/EXIT: nothing is known about
+// where the device was before, so claiming a crossing would be an invention.
+// Reactivating a geofence returns the pair to that unknown-previous condition
+// (see GeofenceDeviceState), so it baselines again rather than crossing.
+enum GeofenceTransition {
+  BASELINE_INSIDE
+  BASELINE_OUTSIDE
+  ENTER
+  EXIT
+  STAY_INSIDE
+  STAY_OUTSIDE
+}
+
 // Authenticated identity. Login identity is the canonicalized (trimmed +
 // lowercased) email, enforced unique at the database layer. Only the bcrypt
 // password hash is stored; plaintext passwords are never persisted or logged.
@@ -48,8 +75,8 @@ model User {
 // to exactly one tenant, and access is only ever granted through a validated
 // membership.
 model Tenant {
-  id          String       @id @default(cuid())
-  name        String       @db.VarChar(120)
+  id             String          @id @default(cuid())
+  name           String          @db.VarChar(120)
   memberships    Membership[]
   geofences      Geofence[]
   trackedDevices TrackedDevice[]
@@ -102,12 +129,17 @@ model Geofence {
   // required Unsupported field; the database itself enforces NOT NULL.
   centerPoint Unsupported("geography(Point, 4326)")?
 
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  alertEvents AlertEvent[]
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alertEvents  AlertEvent[]
+  deviceStates GeofenceDeviceState[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Referenced by GeofenceDeviceState's composite foreign key, for the same
+  // reason TrackedDevice carries one: PostgreSQL itself then rejects a state row
+  // whose tenant disagrees with its geofence's tenant.
+  @@unique([id, tenantId])
   @@index([tenantId])
   // Declares the GiST index created by the geofence_spatial_constraints
   // migration so Prisma knows it exists and does not try to drop it. The name
@@ -152,8 +184,9 @@ model TrackedDevice {
   name      String  @db.VarChar(120)
   isActive  Boolean @default(true)
 
-  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   locationEvents LocationEvent[]
+  geofenceStates GeofenceDeviceState[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -220,11 +253,87 @@ model LocationEvent {
   // LocationEvent.
   trackedDevice TrackedDevice @relation(fields: [trackedDeviceId, tenantId], references: [id, tenantId], onDelete: Cascade)
 
+  // Back-relation for GeofenceDeviceState.lastLocationEvent (GF-6). Location
+  // events stay append-only; nothing here makes them mutable.
+  geofenceStates GeofenceDeviceState[]
+
   // Idempotency boundary. Including tenantId is redundant with the composite
   // foreign key above, but it keeps the constraint (and every replay lookup that
   // uses it) tenant-qualified in its own right, so one tenant's event key can
   // never collide with — or disclose — another's.
   @@unique([tenantId, trackedDeviceId, eventKey])
+  // Referenced by GeofenceDeviceState's composite foreign key, so a state row
+  // cannot cite a source event belonging to a different tenant.
+  @@unique([id, tenantId])
   // Supports the tenant-scoped device timeline that later phases read.
   @@index([tenantId, trackedDeviceId, observedAt])
+}
+
+// The transition state of one device against one geofence (GF-6).
+//
+// This is the whole of GF-6's persistence: exactly enough to decide, for the
+// next accepted observation, whether the device crossed a boundary. There is no
+// transition history table and no alert, notification or delivery record — GF-7
+// owns durable alert-event generation, and pre-declaring its tables here would
+// only add unused columns.
+//
+// Identity is (tenantId, trackedDeviceId, geofenceId) and it is the primary key,
+// so the database — not the service layer — guarantees one row per triple. That
+// is also the conflict target the single atomic upsert statement in
+// geofence-transition.query.ts infers, which is what makes concurrent
+// observations impossible to resolve into two contradictory rows. There is no
+// surrogate cuid because the row has no identity of its own to name, and because
+// every write to this table is raw SQL, which cannot invoke Prisma's `cuid()`.
+//
+// Both foreign keys are composite on (id, tenantId). A state row therefore
+// cannot reference a geofence, device or source event outside its own tenant:
+// cross-tenant collision is rejected by PostgreSQL, not merely avoided by the
+// query predicates (which also carry the tenant).
+//
+// Deleting a geofence, a device or a tenant removes the state that referred to
+// it. Deactivating a geofence removes it too (GeofencesService.update), which is
+// what makes the first observation after a reactivation a new BASELINE_* rather
+// than a fabricated ENTER or EXIT.
+//
+// No rounded distance is stored. Distance is a presentation value derived from
+// the geography columns on demand; persisting it would create a second,
+// staler answer to a question the database already answers exactly.
+model GeofenceDeviceState {
+  tenantId        String
+  trackedDeviceId String
+  geofenceId      String
+
+  // Where the device stood at the last accepted observation.
+  state GeofenceContainmentState
+
+  // The classification that last accepted observation produced. Stored, not
+  // merely returned, for two reasons: the ON CONFLICT update computes it from
+  // the row it is actually overwriting, which is what makes classification
+  // atomic with advancement rather than a read-then-write race; and replaying
+  // the same location event can then answer with the identical classification
+  // instead of a second, differently-worded description of one crossing.
+  lastTransition GeofenceTransition
+
+  // Which observation this state came from, and when that observation was taken
+  // according to the source. `lastObservedAt` is the canonical ordering value —
+  // never a server receipt time — and ties on it are broken by
+  // `lastLocationEventId`. Together they are the total order that stops an
+  // out-of-order or replayed event from regressing state.
+  lastLocationEventId String
+  lastObservedAt      DateTime @db.Timestamptz(3)
+
+  trackedDevice     TrackedDevice @relation(fields: [trackedDeviceId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  geofence          Geofence      @relation(fields: [geofenceId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  lastLocationEvent LocationEvent @relation(fields: [lastLocationEventId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  // Written explicitly by the upsert statement: `@updatedAt` is a Prisma Client
+  // behavior, and no Prisma Client write ever creates or advances these rows.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([tenantId, trackedDeviceId, geofenceId])
+  // Retiring the state of a geofence (deactivation) and reading a device's
+  // states are both tenant-scoped; the primary key already serves the latter.
+  @@index([tenantId, geofenceId])
+  @@index([tenantId, lastLocationEventId])
 }

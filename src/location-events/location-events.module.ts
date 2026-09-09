@@ -4,6 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { GeofenceContainmentQuery } from './geofence-containment.query';
 import { GeofenceEvaluationService } from './geofence-evaluation.service';
+import { GeofenceTransitionQuery } from './geofence-transition.query';
+import { GeofenceTransitionService } from './geofence-transition.service';
 import { LocationEventsController } from './location-events.controller';
 import { LocationEventsService } from './location-events.service';
 
@@ -13,6 +15,8 @@ import { LocationEventsService } from './location-events.service';
     LocationEventsService,
     GeofenceEvaluationService,
     GeofenceContainmentQuery,
+    GeofenceTransitionService,
+    GeofenceTransitionQuery,
     PrismaService,
   ],
 })

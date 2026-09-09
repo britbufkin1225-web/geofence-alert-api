@@ -9,9 +9,11 @@ This document outlines the **planned** API endpoints for the GeoFence Alert API.
 > location-event ingestion are now implemented (GF-4)** — see
 > [docs/gf4-location-event-ingestion.md](gf4-location-event-ingestion.md) — but
 > only as the two write endpoints listed there, not the full CRUD surface drawn
-> below. Alert events, geofence evaluation, and all read/query routes for devices
-> and events remain **not implemented**. Several differences from this design
-> exist in the current code:
+> below. **Point-in-circle evaluation (GF-5)** and **enter/exit transition
+> detection (GF-6)** are implemented — see [docs/api.md](api.md) and
+> [docs/gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
+> Alert events and all read/query routes for devices and events remain **not
+> implemented**. Several differences from this design exist in the current code:
 >
 > - `/health` and `/status` are served **unversioned at the root**, not under
 >   `/api/v1` as drawn below.

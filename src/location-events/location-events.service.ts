@@ -10,7 +10,9 @@ import { isPrismaUniqueConstraint } from '../common/prisma-unique-constraint';
 import { parseStrictIsoDateTime } from '../common/validators/strict-iso-date-time.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLocationEventDto } from './dto/create-location-event.dto';
+import { GeofenceTransitionDto } from './dto/geofence-transition-response.dto';
 import { LocationEventResponseDto } from './dto/location-event-response.dto';
+import { GeofenceTransitionService } from './geofence-transition.service';
 
 /**
  * Location-event ingestion.
@@ -25,10 +27,18 @@ import { LocationEventResponseDto } from './dto/location-event-response.dto';
  * foreign key onto `TrackedDevice (id, tenantId)`, so even a future code path
  * that got this wrong could not persist an event whose tenant disagrees with its
  * device's tenant — PostgreSQL rejects the row.
+ *
+ * Since GF-6, an accepted event is also classified against the tenant's active
+ * geofences before the response is written. That step runs only once the event
+ * is stored and only for an event this tenant owns, so transition state is never
+ * advanced by an observation that ingestion itself rejected.
  */
 @Injectable()
 export class LocationEventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly geofenceTransitions: GeofenceTransitionService,
+  ) {}
 
   async ingest(
     dto: CreateLocationEventDto,
@@ -52,7 +62,7 @@ export class LocationEventsService {
     });
 
     if (existing) {
-      return this.resolveReplay(existing, dto, observedAt, device.deviceKey);
+      return this.completeReplay(existing, dto, observedAt, device, tenantId);
     }
 
     try {
@@ -66,7 +76,7 @@ export class LocationEventsService {
         },
       });
 
-      return this.toResponse(created, device.deviceKey, false);
+      return this.complete(created, device.deviceKey, false, tenantId);
     } catch (error) {
       if (
         !isPrismaUniqueConstraint(
@@ -89,8 +99,55 @@ export class LocationEventsService {
         throw error;
       }
 
-      return this.resolveReplay(winner, dto, observedAt, device.deviceKey);
+      return this.completeReplay(winner, dto, observedAt, device, tenantId);
     }
+  }
+
+  /**
+   * Classifies the stored event against the tenant's active geofences and
+   * assembles the response.
+   *
+   * Transition detection runs on the replay path too, and deliberately so: the
+   * first attempt may have stored the event and then failed before advancing
+   * state, and the retry that reaches the replay path is what completes it. The
+   * advancement itself is guarded by the observation ordering, so re-running it
+   * for an event that still owns state changes nothing and reports the same
+   * classification. A superseded event follows the stale-observation policy.
+   *
+   * A failure here fails the request rather than being swallowed. The event
+   * stays stored, so the client's next retry with the same `eventKey` resolves
+   * to the same event. It repairs missing state only if no newer observation has
+   * superseded it; no historical comparison can be reconstructed afterward.
+   */
+  private async complete(
+    event: LocationEvent,
+    deviceKey: string,
+    replayed: boolean,
+    tenantId: string,
+  ): Promise<LocationEventResponseDto> {
+    const geofenceTransitions = await this.geofenceTransitions.evaluate(
+      event.id,
+      tenantId,
+    );
+
+    return this.toResponse(event, deviceKey, replayed, geofenceTransitions);
+  }
+
+  /**
+   * A replay is only completed once it has been proven identical to the stored
+   * event, so a conflicting reuse of an `eventKey` raises 409 without ever
+   * reaching transition detection.
+   */
+  private async completeReplay(
+    existing: LocationEvent,
+    dto: CreateLocationEventDto,
+    observedAt: Date,
+    device: { deviceKey: string },
+    tenantId: string,
+  ): Promise<LocationEventResponseDto> {
+    this.assertReplayMatches(existing, dto, observedAt);
+
+    return this.complete(existing, device.deviceKey, true, tenantId);
   }
 
   /**
@@ -142,12 +199,11 @@ export class LocationEventsService {
    * silently accepted, because answering "success" would tell the client its new
    * data was recorded when it was not, and the stored event is never overwritten.
    */
-  private resolveReplay(
+  private assertReplayMatches(
     existing: LocationEvent,
     dto: CreateLocationEventDto,
     observedAt: Date,
-    deviceKey: string,
-  ): LocationEventResponseDto {
+  ): void {
     const matches =
       existing.observedAt.getTime() === observedAt.getTime() &&
       existing.latitude === dto.latitude &&
@@ -159,14 +215,13 @@ export class LocationEventsService {
         'eventKey already used for a different location event',
       );
     }
-
-    return this.toResponse(existing, deviceKey, true);
   }
 
   private toResponse(
     event: LocationEvent,
     deviceKey: string,
     replayed: boolean,
+    geofenceTransitions: GeofenceTransitionDto[],
   ): LocationEventResponseDto {
     return {
       id: event.id,
@@ -180,6 +235,7 @@ export class LocationEventsService {
       longitude: event.longitude,
       accuracyMeters: event.accuracyMeters,
       replayed,
+      geofenceTransitions,
     };
   }
 }
