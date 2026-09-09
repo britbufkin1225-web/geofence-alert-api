@@ -600,6 +600,9 @@ describe('GF-4 location-event database layer (disposable PostgreSQL/PostGIS)', (
       `;
 
       expect(rows.map((row) => row.index_name)).toEqual([
+        // Added by GF-6 so GeofenceDeviceState can carry a composite foreign key
+        // onto (id, tenantId) and never cite a source event of another tenant.
+        'LocationEvent_id_tenantId_key',
         'LocationEvent_pkey',
         'LocationEvent_tenantId_trackedDeviceId_eventKey_key',
         'TrackedDevice_id_tenantId_key',
@@ -614,6 +617,9 @@ describe('GF-4 location-event database layer (disposable PostgreSQL/PostGIS)', (
       expect(
         byName.get('LocationEvent_tenantId_trackedDeviceId_eventKey_key'),
       ).toContain('"tenantId", "trackedDeviceId", "eventKey"');
+      expect(byName.get('LocationEvent_id_tenantId_key')).toContain(
+        '(id, "tenantId")',
+      );
     });
 
     it('has the tenant lookup indexes', async () => {

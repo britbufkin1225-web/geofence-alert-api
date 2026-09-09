@@ -37,8 +37,35 @@ export const CONTAINMENT_PREFILTER_METERS =
   GEOFENCE_RADIUS_MAX_METERS + CONTAINMENT_PREFILTER_MARGIN_METERS;
 
 /**
- * The single spatial statement of GF-5 — the only expression of containment in
- * the application, written once.
+ * The geodesic separation between the joined geofence center and observation, in
+ * meters on the WGS 84 spheroid.
+ *
+ * Written once and embedded by reference wherever a distance is measured, so no
+ * caller can drift onto a different function, operand order or unit. It assumes
+ * the surrounding statement joins `"Geofence" AS "geofence"` and
+ * `"LocationEvent" AS "event"`; both statements in this module and in
+ * geofence-transition.query.ts use exactly those aliases.
+ *
+ * Parameter-free, so embedding it never renumbers a caller's bindings.
+ */
+export const CONTAINMENT_DISTANCE_METERS = Prisma.sql`ST_Distance("geofence"."centerPoint", "event"."observedPoint")`;
+
+/**
+ * The containment predicate of the application — the single place that decides
+ * whether an observation is inside a circle.
+ *
+ * `<=` makes a point exactly on the boundary inside. GF-6 classifies transitions
+ * from this same expression rather than restating it, so a boundary observation
+ * cannot be inside for evaluation and outside for transition detection.
+ */
+export const CONTAINMENT_PREDICATE = Prisma.sql`${CONTAINMENT_DISTANCE_METERS} <= "geofence"."radiusMeters"`;
+
+/**
+ * The point-in-circle statement of GF-5.
+ *
+ * It does not restate containment: the decision comes from CONTAINMENT_PREDICATE
+ * above, the application's only expression of it, which GF-6's transition
+ * statement embeds as well.
  *
  * Why raw SQL: Prisma cannot reference `Unsupported("geography(Point, 4326)")`
  * columns, so PostGIS predicates are unreachable through the query builder.
@@ -101,8 +128,7 @@ export function containmentStatement(
            "geofence"."latitude" AS "latitude",
            "geofence"."longitude" AS "longitude",
            "geofence"."radiusMeters" AS "radiusMeters",
-           ST_Distance("geofence"."centerPoint", "event"."observedPoint")
-             AS "distanceMeters"
+           ${CONTAINMENT_DISTANCE_METERS} AS "distanceMeters"
     FROM "LocationEvent" AS "event"
     JOIN "Geofence" AS "geofence"
       ON "geofence"."tenantId" = ${tenantId}
@@ -112,8 +138,7 @@ export function containmentStatement(
            "event"."observedPoint",
            ${CONTAINMENT_PREFILTER_METERS}::double precision
          )
-     AND ST_Distance("geofence"."centerPoint", "event"."observedPoint")
-           <= "geofence"."radiusMeters"
+     AND ${CONTAINMENT_PREDICATE}
     WHERE "event"."id" = ${locationEventId}
       AND "event"."tenantId" = ${tenantId}
     ORDER BY "distanceMeters" ASC, "geofenceId" ASC

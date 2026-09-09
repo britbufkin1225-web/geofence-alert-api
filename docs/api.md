@@ -115,14 +115,11 @@ Timezone-free timestamps, impossible calendar dates, numeric strings, `NaN`,
 `trackedDeviceId`, `receivedAt`, `createdAt`, `observedPoint`) are rejected with
 `400`.
 
-## Geofence Evaluation Endpoint (GF-5, local only)
+## Geofence Evaluation Endpoint (GF-5)
 
-Implemented locally on the `phase-gf-5-deterministic-point-in-circle-evaluation`
-branch; **not merged**.
-
-| Method | Endpoint                                                       | Purpose                                                                      | Status           |
-| ------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------- |
-| GET    | `/api/v1/location-events/:locationEventId/geofence-evaluation` | Which active geofences of the caller's tenant contain one stored observation | Complete (local) |
+| Method | Endpoint                                                       | Purpose                                                                      | Status   |
+| ------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------- | -------- |
+| GET    | `/api/v1/location-events/:locationEventId/geofence-evaluation` | Which active geofences of the caller's tenant contain one stored observation | Complete |
 
 Requires a Bearer token. The tenant comes from the verified principal; the only
 input is the path identifier, which must be a valid `cuid` (`400` otherwise). The
@@ -172,8 +169,73 @@ tenant returns the same `404` as one that exists nowhere.
 }
 ```
 
-Enter/exit/dwell transitions, persisted evaluation results, alerts and
-notification delivery are **not** part of GF-5 and remain future work.
+This endpoint is unchanged by GF-6: it stays a pure read, still returns
+containing geofences only, and reports no transition.
+
+Dwell detection, alerts and notification delivery are **not** part of GF-5 or
+GF-6 and remain future work.
+
+## Geofence Transitions on Ingestion (GF-6, local only)
+
+Implemented locally on the
+`phase-gf-6-deterministic-geofence-transition-detection` branch; **not merged**.
+
+`POST /api/v1/location-events` returns an additive `geofenceTransitions` array
+beside the stored event. Every pre-GF-6 field keeps its meaning and value, so a
+client that ignores the array is unaffected. There is no new route.
+
+Semantics:
+
+- One entry per **active** geofence of the caller's tenant — not only the
+  containing ones, because an `EXIT` can only be reported for a geofence the
+  device has left. Empty when the tenant has no active geofence.
+- Ordered by ascending distance, then ascending `geofenceId` — the same total
+  order GF-5 uses. `distanceMeters` follows the same millimeter rounding rule.
+- Containment is GF-5's, unchanged and boundary-inclusive.
+- `state` describes **this** observation. `transition` classifies it against the
+  state that preceded it. `stateAdvanced` says whether this observation became the
+  device's newest accepted state.
+- The first accepted observation for a device and geofence is a `BASELINE_*`, not
+  an `ENTER` or `EXIT`. So is the first one after a geofence is re-enabled.
+- Ordering is by `observedAt`, tie-broken by event id; server receipt time is
+  never used. An older observation cannot regress state and never reports a
+  crossing. A replay repeats the classification it originally produced and
+  advances nothing.
+- Deactivating a geofence produces no `EXIT` and retires its transition state.
+
+| `transition` | Meaning |
+| --- | --- |
+| `BASELINE_INSIDE` / `BASELINE_OUTSIDE` | First accepted observation for this device and geofence |
+| `ENTER` / `EXIT` | Boundary crossed since the previous accepted observation |
+| `STAY_INSIDE` / `STAY_OUTSIDE` | No crossing |
+
+```json
+{
+  "id": "clx1a2b3c4d5e6f7g8h9i0j1k",
+  "deviceKey": "van-17",
+  "eventKey": "evt-2026-09-09-0001",
+  "observedAt": "2026-09-09T06:00:00.000Z",
+  "latitude": 30.2672,
+  "longitude": -97.7431,
+  "accuracyMeters": 8.5,
+  "replayed": false,
+  "geofenceTransitions": [
+    {
+      "geofenceId": "clx0000000000000000000001",
+      "name": "Warehouse Zone",
+      "radiusMeters": 250,
+      "distanceMeters": 9.652,
+      "state": "INSIDE",
+      "transition": "ENTER",
+      "stateAdvanced": true
+    }
+  ]
+}
+```
+
+GF-6 creates **no** alert, notification or delivery record, and nothing in this
+shape asserts that anyone was notified. See
+[gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
 
 ---
 

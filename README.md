@@ -9,9 +9,12 @@ A backend API for managing geofence records, built with NestJS and Prisma.
 > pagination, filtering, and a summary endpoint, backed by **PostgreSQL with
 > PostGIS** via Prisma. Circle geofences store a canonical
 > `geography(Point, 4326)` centre with a GiST index (GF-3), and authenticated
-> location-event ingestion for tenant-owned tracked devices (GF-4, feature branch)
-> stores observations the same way. Spatial **evaluation** and alerting are still
-> **planned roadmap items and are not implemented**. See
+> location-event ingestion for tenant-owned tracked devices (GF-4) stores
+> observations the same way. Deterministic point-in-circle **evaluation** (GF-5)
+> is merged, and **enter/exit transition detection** (GF-6, feature branch)
+> classifies each accepted observation against the tenant's active geofences.
+> **Alert generation and notification delivery are still planned roadmap items and
+> are not implemented.** See
 > [Currently Implemented vs Planned](#currently-implemented-vs-planned).
 
 ## Project Summary
@@ -49,13 +52,18 @@ the codebase provides the geofence-management foundation for that vision.
 - A consistent, non-leaky JSON error contract
 - Tenant-owned tracked devices and authenticated location-event ingestion, with
   database-enforced idempotency and a documented replay-versus-conflict contract
-  (GF-4, feature branch)
+  (GF-4)
+- Deterministic, read-only point-in-circle geofence evaluation for a stored
+  observation, decided by PostGIS `geography` semantics (GF-5)
+- Deterministic enter/exit transition detection with atomic, tenant-isolated
+  per-device transition state, returned on the ingestion response (GF-6, feature
+  branch)
 - Unit, HTTP-level, and real-database integration tests
 
 **Planned but not yet implemented:**
 
 - Location-event history / query endpoints
-- Spatial containment, enter/exit/dwell evaluation
+- Dwell-time detection and polygon geofences
 - Alert creation and dispatch
 - Refresh tokens, password reset, MFA, RBAC, rate limiting, account lockout
 - Production deployment readiness
@@ -421,9 +429,10 @@ Additional planned testing includes:
 | GF-1 | Defensive validation baseline hardening | Complete |
 | GF-2 | Identity, authentication + tenant isolation | Complete |
 | GF-3 | PostgreSQL/PostGIS spatial foundation | Complete |
-| GF-4 | Authenticated location-event ingestion | Implemented (feature branch) |
-| GF-5 | Deterministic point-in-circle evaluation | Next |
-| GF-6+ | Transitions and alerts | Planned |
+| GF-4 | Authenticated location-event ingestion | Complete |
+| GF-5 | Deterministic point-in-circle evaluation | Complete |
+| GF-6 | Deterministic geofence transition detection | Implemented (feature branch) |
+| GF-7+ | Alert generation and delivery | Planned |
 | Phase 10 | Documentation polish | In Progress |
 | Phase 11 | Portfolio polish | Planned |
 

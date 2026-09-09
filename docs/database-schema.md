@@ -141,11 +141,58 @@ Two constraints carry the ownership invariant:
   service layer being correct. Deletion cascades
   `Tenant → TrackedDevice → LocationEvent`.
 
+`@@unique([id, tenantId])` was added by GF-6 so `GeofenceDeviceState` can
+reference the pair — see below.
+
 `LocationEvent` has **no** GiST index, deliberately: the containment query a
 later phase will run probes the *geofence* index, and indexing observations would
 serve only a location-history API that does not exist. The integration suite
 asserts the absence so it stays a recorded decision. See
 [gf4-location-event-ingestion.md](gf4-location-event-ingestion.md).
+
+### `GeofenceDeviceState` (implemented, GF-6)
+
+The transition state of one device against one geofence — the whole of GF-6's
+persistence.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `tenantId` | `text` | Part of the primary key and of all three composite FKs |
+| `trackedDeviceId` | `text` | Part of the primary key |
+| `geofenceId` | `text` | Part of the primary key |
+| `state` | `GeofenceContainmentState` | `INSIDE` / `OUTSIDE` at the last accepted observation |
+| `lastTransition` | `GeofenceTransition` | The classification that observation produced |
+| `lastLocationEventId` | `text` | Which observation the state came from |
+| `lastObservedAt` | `timestamptz(3)` | When that observation was taken, per the source |
+| `createdAt` / `updatedAt` | `timestamp(3)` | Written explicitly by the upsert, not by Prisma Client |
+
+`@@id([tenantId, trackedDeviceId, geofenceId])` — the identity **is** the
+uniqueness constraint, and it is the conflict target of the single
+`INSERT ... ON CONFLICT DO UPDATE` statement that compares and advances state
+atomically. There is no surrogate `cuid`: the row has no identity of its own to
+name, and every write to this table is raw SQL, which cannot invoke Prisma's
+`cuid()`.
+
+All three foreign keys are composite on `(id, tenantId)` — onto `Geofence`,
+`TrackedDevice` and `LocationEvent` — so PostgreSQL rejects any state row whose
+tenant disagrees with its geofence, device or source event. Deletion cascades from
+all three, and from `Tenant` through them.
+
+No distance, latitude or longitude is stored: distance is a presentation value
+derived from the geography columns on demand, and persisting it would create a
+second, staler answer. There is deliberately **no transition-history table** —
+only the current state is needed to compare consecutive observations, and durable
+alert-event generation belongs to GF-7. See
+[gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
+
+### Enums
+
+| Enum | Values | Used by |
+| --- | --- | --- |
+| `AlertSeverity` | `LOW`, `MEDIUM`, `HIGH`, `CRITICAL` | `AlertEvent` (schema only) |
+| `AlertStatus` | `OPEN`, `ACKNOWLEDGED`, `RESOLVED` | `AlertEvent` (schema only) |
+| `GeofenceContainmentState` | `INSIDE`, `OUTSIDE` | `GeofenceDeviceState` (GF-6) |
+| `GeofenceTransition` | `BASELINE_INSIDE`, `BASELINE_OUTSIDE`, `ENTER`, `EXIT`, `STAY_INSIDE`, `STAY_OUTSIDE` | `GeofenceDeviceState` (GF-6) |
 
 ## Circle geofence spatial representation (GF-3)
 
@@ -290,6 +337,11 @@ Deliberate decisions:
 | `20260908110000_audit_contract_hardening` | One-metre radius minimum and ECMAScript whitespace checks |
 | `20260909063002_tracked_devices_and_location_events` | GF-4 tables, composite FK, uniqueness and lookup indexes |
 | `20260909063100_location_event_spatial_constraints` | Generated `observedPoint`, CHECK constraints, no spatial index (by decision) |
+| `20260909120000_geofence_device_transition_state` | GF-6 enums, `GeofenceDeviceState`, composite FKs, `(id, tenantId)` uniques on `Geofence` and `LocationEvent` |
+
+`20260909120000` carries the same hand edit for the same reason, recorded in its
+own header: Prisma re-proposed dropping the generation expressions on both
+`centerPoint` and `observedPoint`, and both blocks were removed.
 
 `20260909063002` is Prisma-generated with one hand edit, documented in the file
 itself: Prisma's leading `ALTER TABLE "Geofence" ... DROP DEFAULT` block was

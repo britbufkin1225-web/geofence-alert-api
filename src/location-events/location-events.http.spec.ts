@@ -38,6 +38,16 @@ interface ErrorBody {
   timestamp: string;
 }
 
+interface TransitionBody {
+  geofenceId: string;
+  name: string;
+  radiusMeters: number;
+  distanceMeters: number;
+  state: string;
+  transition: string;
+  stateAdvanced: boolean;
+}
+
 interface EventBody {
   id: string;
   tenantId: string;
@@ -48,6 +58,7 @@ interface EventBody {
   accuracyMeters: number;
   observedAt: string;
   receivedAt: string;
+  geofenceTransitions: TransitionBody[];
 }
 
 const activeDevice = { id: DEVICE_ID, deviceKey: 'device-001', isActive: true };
@@ -91,6 +102,12 @@ describe('Location event ingestion (HTTP)', () => {
     membership: { findFirst: jest.fn() },
     trackedDevice: { findUnique: jest.fn(), create: jest.fn() },
     locationEvent: { findUnique: jest.fn(), create: jest.fn() },
+    // GF-6 transition detection runs inside ingestion and reaches the database
+    // through these two. The spatial and transition semantics are proven against
+    // real PostgreSQL/PostGIS in the integration suite; mocking them here would
+    // only assert that the mock returns what it was told to.
+    $queryRaw: jest.fn(),
+    $transaction: jest.fn(),
   };
 
   const post = (body: unknown) =>
@@ -128,6 +145,10 @@ describe('Location event ingestion (HTTP)', () => {
     mockPrisma.trackedDevice.findUnique.mockResolvedValue(activeDevice);
     mockPrisma.locationEvent.findUnique.mockResolvedValue(null);
     mockPrisma.locationEvent.create.mockResolvedValue(storedEvent);
+    mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.$transaction.mockImplementation(
+      (run: (tx: typeof mockPrisma) => unknown) => run(mockPrisma),
+    );
   });
 
   describe('authentication', () => {
@@ -279,6 +300,112 @@ describe('Location event ingestion (HTTP)', () => {
         [{ data: { eventKey: string } }]
       >;
       expect(call.data.eventKey).toBe('evt-001');
+    });
+  });
+
+  describe('geofence transition contract (GF-6)', () => {
+    /**
+     * The database decides containment, ordering and advancement; these rows
+     * stand in for what it returned. Nothing here asserts spatial behavior —
+     * that is proven against real PostGIS in
+     * test/integration/geofence-transition.integration-spec.ts.
+     */
+    const advancedRow = {
+      geofenceId: 'cgeoaaaaaaaaaaaaaaaaaaaaa',
+      name: 'Warehouse Zone',
+      radiusMeters: 250,
+      distanceMeters: 12.3456789,
+      state: 'INSIDE',
+      advancedTransition: 'ENTER',
+    };
+
+    it('returns an empty transition array when no geofence is applicable', async () => {
+      const res = await post(validBody).expect(201);
+      expect((res.body as EventBody).geofenceTransitions).toEqual([]);
+    });
+
+    it('serializes the transition contract beside the stored event', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([advancedRow]);
+
+      const res = await post(validBody).expect(201);
+      const body = res.body as EventBody;
+
+      // Every pre-GF-6 field keeps its meaning: the array is purely additive.
+      expect(body.id).toBe(EVENT_ID);
+      expect(body.replayed).toBe(false);
+      expect(body.geofenceTransitions).toEqual([
+        {
+          geofenceId: 'cgeoaaaaaaaaaaaaaaaaaaaaa',
+          name: 'Warehouse Zone',
+          radiusMeters: 250,
+          distanceMeters: 12.346,
+          state: 'INSIDE',
+          transition: 'ENTER',
+          stateAdvanced: true,
+        },
+      ]);
+    });
+
+    it('reports a non-advancing observation without claiming a crossing', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...advancedRow, state: 'OUTSIDE', advancedTransition: null },
+      ]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([]);
+
+      const res = await post(validBody).expect(201);
+      const [transition] = (res.body as EventBody).geofenceTransitions;
+
+      expect(transition.stateAdvanced).toBe(false);
+      expect(transition.transition).toBe('STAY_OUTSIDE');
+    });
+
+    it('never returns a geography column inside a transition', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([advancedRow]);
+
+      const res = await post(validBody).expect(201);
+      const serialized = JSON.stringify(res.body);
+
+      expect(serialized).not.toContain('centerPoint');
+      expect(serialized).not.toContain('observedPoint');
+    });
+
+    it('maps a transition-detection failure to the sanitized 500 envelope', async () => {
+      mockPrisma.$transaction.mockRejectedValue(
+        new Error('relation "GeofenceDeviceState" does not exist at /srv/db'),
+      );
+
+      const res = await post(validBody).expect(500);
+      const body = res.body as ErrorBody;
+
+      expect(body.message).toBe('Internal server error');
+      expect(JSON.stringify(body)).not.toContain('GeofenceDeviceState');
+      expect(JSON.stringify(body)).not.toContain('/srv/db');
+    });
+
+    it('does not evaluate transitions for a conflicting replay', async () => {
+      mockPrisma.locationEvent.findUnique.mockResolvedValue({
+        ...storedEvent,
+        latitude: 1,
+      });
+
+      await post(validBody).expect(409);
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not evaluate transitions for a device outside the tenant', async () => {
+      mockPrisma.trackedDevice.findUnique.mockResolvedValue(null);
+
+      await post(validBody).expect(404);
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not evaluate transitions for an anonymous submission', async () => {
+      await request(server)
+        .post('/api/v1/location-events')
+        .send(validBody)
+        .expect(401);
+
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
   });
 

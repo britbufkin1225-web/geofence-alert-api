@@ -153,6 +153,39 @@ export class GeofencesService {
     // tenant predicate on the mutation itself as defense in depth.
     await this.findOne(id, tenantId);
 
+    // Deactivating a geofence retires the GF-6 transition state that referred to
+    // it, in the same transaction as the deactivation itself.
+    //
+    // While the geofence is inactive it is excluded from evaluation, so no
+    // observation compares against that state and no EXIT is fabricated. Keeping
+    // the rows would mean that reactivating the geofence resumed a comparison
+    // against a position the device may have left long ago, and reported the
+    // first observation afterwards as an ENTER or EXIT that was never observed.
+    // Retiring them instead makes that first observation a BASELINE_*, which is
+    // the honest statement: nothing is known about where the device was while
+    // the geofence was not being evaluated.
+    //
+    // The policy is enforced on this mutation path. A geofence deactivated by a
+    // direct database write bypasses it, as such a write bypasses every other
+    // service-layer rule.
+    if (updateGeofenceDto.isActive === false) {
+      return this.prisma.$transaction(async (tx) => {
+        const geofence = await tx.geofence.update({
+          where: {
+            id,
+            tenantId,
+          },
+          data: updateGeofenceDto,
+        });
+
+        await tx.geofenceDeviceState.deleteMany({
+          where: { tenantId, geofenceId: id },
+        });
+
+        return geofence;
+      });
+    }
+
     return this.prisma.geofence.update({
       where: {
         id,

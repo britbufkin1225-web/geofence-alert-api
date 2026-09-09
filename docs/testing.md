@@ -37,8 +37,8 @@ iterating after `npm run test:db -- --keep`.
 ## Current Verified Test State
 
 ```text
-Unit + HTTP     Test Suites: 13 passed   Tests: 297 passed
-Integration     Test Suites: 6 passed    Tests: 170 passed
+Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
+Integration     Test Suites: 8 passed    Tests: 251 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -77,6 +77,22 @@ E2E             Test Suites: 1 passed    Tests: 1 passed
     the composite foreign key that binds event tenant to device tenant, cascade
     behavior, the idempotency unique index, and the deliberate absence of a
     spatial index on `LocationEvent`.
+  - `geofence-evaluation.integration-spec.ts` — the GF-5 containment predicate
+    against real PostGIS: meter-based geography semantics, exact-boundary
+    inclusiveness pinned to the distance PostGIS itself measures, coordinate
+    order, the active and tenant filters, deterministic distance-then-id
+    ordering, the index-servable prefilter's query plan, and the read-only
+    guarantee.
+  - `geofence-transition.integration-spec.ts` — the GF-6 transition path
+    end-to-end through HTTP ingestion: the full classification table including
+    the exact boundary, per-device / per-geofence / per-tenant state
+    independence, out-of-order and replayed events, the equal-instant tie-break,
+    the conflicting-replay refusal, authorization and cross-tenant isolation
+    (including the composite foreign keys that make a cross-tenant state row
+    impossible), inactive and reactivated geofences, concurrent races proving a
+    single state row and a deterministic winner, the sanitized error envelope
+    for a real database failure, and the absence of any alert or
+    transition-history table.
 
 ### Disposable test database
 

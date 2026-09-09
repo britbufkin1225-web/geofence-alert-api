@@ -13,23 +13,32 @@ Persistence is **PostgreSQL with PostGIS** (GF-3, merged). Circle geofences stor
 a canonical `geography(Point, 4326)` centre, maintained by a database generated
 column and indexed with GiST, alongside database-enforced CHECK constraints.
 
-**GF-4 — authenticated location-event ingestion — is implemented locally on the
-`phase-gf-4-authenticated-location-event-ingestion` feature branch and is not
-merged.** It adds tenant-owned tracked devices, an authenticated ingestion
-endpoint with database-enforced idempotency, and the same generated spatial point
+**GF-4 — authenticated location-event ingestion — is merged.** It adds
+tenant-owned tracked devices, an authenticated ingestion endpoint with
+database-enforced idempotency, and the same generated spatial point
 representation for observations.
 
-**GF-5 — deterministic point-in-circle geofence evaluation — is implemented
-locally on the `phase-gf-5-deterministic-point-in-circle-evaluation` feature
-branch and is not merged.** It adds one authenticated, read-only endpoint that
-answers which active geofences of the caller's tenant contain one already-stored
-location event. Containment is decided by PostgreSQL/PostGIS over `geography`
-values, so it is boundary-inclusive and measured in meters, and matches are
-ordered deterministically by distance then geofence id.
+**GF-5 — deterministic point-in-circle geofence evaluation — is merged.** It adds
+one authenticated, read-only endpoint that answers which active geofences of the
+caller's tenant contain one already-stored location event. Containment is decided
+by PostgreSQL/PostGIS over `geography` values, so it is boundary-inclusive and
+measured in meters, and matches are ordered deterministically by distance then
+geofence id.
 
-Transitions (enter/exit/dwell), persisted evaluation state, alerting and
-notification delivery remain planned future work. GF-5 determines spatial
-membership for one observation and has no downstream effect.
+**GF-6 — deterministic geofence transition detection — is implemented locally on
+the `phase-gf-6-deterministic-geofence-transition-detection` feature branch and is
+not merged.** It classifies every accepted observation against every active
+geofence of its tenant as `BASELINE_INSIDE`, `BASELINE_OUTSIDE`, `ENTER`, `EXIT`,
+`STAY_INSIDE` or `STAY_OUTSIDE`, and persists one current-state row per tenant,
+device and geofence so the next comparison is deterministic. Comparison and
+advancement are a single atomic `INSERT ... ON CONFLICT DO UPDATE`, ordered by the
+source's own `observedAt` with the event id as tie-break, so out-of-order and
+replayed events can neither regress state nor fabricate a crossing. The
+classification is returned as an additive array on the existing ingestion
+response; GF-5's evaluation endpoint is unchanged and still read-only.
+
+Dwell detection, alerting and notification delivery remain planned future work.
+GF-6 creates no alert, notification or delivery record.
 
 ## Completed Work
 
@@ -62,6 +71,9 @@ membership for one observation and has no downstream effect.
 - Added strict ISO-8601 instant parsing with a bounded future-clock allowance (GF-4)
 - Added deterministic, read-only point-in-circle geofence evaluation for a stored
   location event, decided by PostGIS geography semantics (GF-5)
+- Added deterministic geofence transition detection with atomic, tenant-isolated
+  per-device transition state and documented baseline, stale-event, replay and
+  reactivation policies (GF-6)
 
 ## Current Backend Capabilities
 
