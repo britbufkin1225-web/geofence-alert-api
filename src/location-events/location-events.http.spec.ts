@@ -46,6 +46,7 @@ interface TransitionBody {
   state: string;
   transition: string;
   stateAdvanced: boolean;
+  alert?: { id: string; createdAt: string };
 }
 
 interface EventBody {
@@ -102,10 +103,16 @@ describe('Location event ingestion (HTTP)', () => {
     membership: { findFirst: jest.fn() },
     trackedDevice: { findUnique: jest.fn(), create: jest.fn() },
     locationEvent: { findUnique: jest.fn(), create: jest.fn() },
-    // GF-6 transition detection runs inside ingestion and reaches the database
-    // through these two. The spatial and transition semantics are proven against
-    // real PostgreSQL/PostGIS in the integration suite; mocking them here would
-    // only assert that the mock returns what it was told to.
+    // GF-7 alert persistence runs inside the same transaction; its conflict-safe
+    // insert is the only Prisma Client write on the path. Deduplication, the
+    // unique constraint and the transaction boundary are proven against real
+    // PostgreSQL in test/integration/geofence-alert.integration-spec.ts; what is
+    // proven here is only what the HTTP contract exposes.
+    alertEvent: { createMany: jest.fn() },
+    // GF-6 transition detection and the GF-7 alert read-back reach the database
+    // through these two. The spatial, transition and deduplication semantics are
+    // proven against real PostgreSQL/PostGIS in the integration suite; mocking
+    // them here would only assert that the mock returns what it was told to.
     $queryRaw: jest.fn(),
     $transaction: jest.fn(),
   };
@@ -146,6 +153,7 @@ describe('Location event ingestion (HTTP)', () => {
     mockPrisma.locationEvent.findUnique.mockResolvedValue(null);
     mockPrisma.locationEvent.create.mockResolvedValue(storedEvent);
     mockPrisma.$queryRaw.mockResolvedValue([]);
+    mockPrisma.alertEvent.createMany.mockResolvedValue({ count: 0 });
     mockPrisma.$transaction.mockImplementation(
       (run: (tx: typeof mockPrisma) => unknown) => run(mockPrisma),
     );
@@ -317,6 +325,26 @@ describe('Location event ingestion (HTTP)', () => {
       distanceMeters: 12.3456789,
       state: 'INSIDE',
       advancedTransition: 'ENTER',
+      trackedDeviceId: DEVICE_ID,
+      observedAt: new Date(OBSERVED_AT),
+    };
+
+    /** The stored alert the GF-7 boundary reads back for `advancedRow`. */
+    const storedAlert = {
+      id: 'calertaaaaaaaaaaaaaaaaaaa',
+      geofenceId: advancedRow.geofenceId,
+      transition: 'ENTER',
+      createdAt: new Date('2026-09-09T06:00:03.000Z'),
+    };
+
+    /**
+     * An ENTER that the alert boundary resolves to `storedAlert`. The two queued
+     * results are, in order, the transition statement and the alert read-back —
+     * both of which run inside the one transaction the service opens.
+     */
+    const crossing = () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([advancedRow]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([storedAlert]);
     };
 
     it('returns an empty transition array when no geofence is applicable', async () => {
@@ -325,7 +353,7 @@ describe('Location event ingestion (HTTP)', () => {
     });
 
     it('serializes the transition contract beside the stored event', async () => {
-      mockPrisma.$queryRaw.mockResolvedValueOnce([advancedRow]);
+      crossing();
 
       const res = await post(validBody).expect(201);
       const body = res.body as EventBody;
@@ -342,6 +370,10 @@ describe('Location event ingestion (HTTP)', () => {
           state: 'INSIDE',
           transition: 'ENTER',
           stateAdvanced: true,
+          alert: {
+            id: storedAlert.id,
+            createdAt: storedAlert.createdAt.toISOString(),
+          },
         },
       ]);
     });
@@ -360,7 +392,7 @@ describe('Location event ingestion (HTTP)', () => {
     });
 
     it('never returns a geography column inside a transition', async () => {
-      mockPrisma.$queryRaw.mockResolvedValueOnce([advancedRow]);
+      crossing();
 
       const res = await post(validBody).expect(201);
       const serialized = JSON.stringify(res.body);
@@ -406,6 +438,185 @@ describe('Location event ingestion (HTTP)', () => {
         .expect(401);
 
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('geofence alert contract (GF-7)', () => {
+    const baseRow = {
+      geofenceId: 'cgeoaaaaaaaaaaaaaaaaaaaaa',
+      name: 'Warehouse Zone',
+      radiusMeters: 250,
+      distanceMeters: 12.3456789,
+      state: 'INSIDE',
+      trackedDeviceId: DEVICE_ID,
+      observedAt: new Date(OBSERVED_AT),
+    };
+
+    const storedAlert = {
+      id: 'calertaaaaaaaaaaaaaaaaaaa',
+      geofenceId: baseRow.geofenceId,
+      transition: 'ENTER',
+      createdAt: new Date('2026-09-09T06:00:03.000Z'),
+    };
+
+    const transitionOf = (body: EventBody) => body.geofenceTransitions[0];
+
+    it.each([['ENTER'], ['EXIT']])(
+      'exposes the stored alert identity on a %s',
+      async (transition) => {
+        mockPrisma.$queryRaw.mockResolvedValueOnce([
+          { ...baseRow, advancedTransition: transition },
+        ]);
+        mockPrisma.$queryRaw.mockResolvedValueOnce([
+          { ...storedAlert, transition },
+        ]);
+
+        const res = await post(validBody).expect(201);
+
+        expect(transitionOf(res.body as EventBody).alert).toEqual({
+          id: storedAlert.id,
+          createdAt: storedAlert.createdAt.toISOString(),
+        });
+      },
+    );
+
+    it.each([
+      ['BASELINE_INSIDE'],
+      ['BASELINE_OUTSIDE'],
+      ['STAY_INSIDE'],
+      ['STAY_OUTSIDE'],
+    ])('omits the alert key entirely on a %s', async (transition) => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...baseRow, advancedTransition: transition },
+      ]);
+
+      const res = await post(validBody).expect(201);
+      const entry = transitionOf(res.body as EventBody);
+
+      // Absent, not present-and-null: a client cannot read "no crossing" as an
+      // alert whose fields failed to arrive.
+      expect(Object.keys(entry)).not.toContain('alert');
+      expect(mockPrisma.alertEvent.createMany).not.toHaveBeenCalled();
+    });
+
+    it('writes no alert for a stale, non-advancing observation', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...baseRow, state: 'OUTSIDE', advancedTransition: null },
+      ]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        {
+          geofenceId: baseRow.geofenceId,
+          lastTransition: 'EXIT',
+          lastLocationEventId: 'ceventbbbbbbbbbbbbbbbbbbb',
+        },
+      ]);
+
+      const res = await post(validBody).expect(201);
+      const entry = transitionOf(res.body as EventBody);
+
+      expect(entry.transition).toBe('STAY_OUTSIDE');
+      expect(entry.alert).toBeUndefined();
+      expect(mockPrisma.alertEvent.createMany).not.toHaveBeenCalled();
+    });
+
+    it('returns the same alert identity when the crossing is replayed', async () => {
+      mockPrisma.locationEvent.findUnique.mockResolvedValue(storedEvent);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...baseRow, advancedTransition: null },
+      ]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        {
+          geofenceId: baseRow.geofenceId,
+          lastTransition: 'ENTER',
+          lastLocationEventId: EVENT_ID,
+        },
+      ]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([storedAlert]);
+
+      const res = await post(validBody).expect(200);
+      const entry = transitionOf(res.body as EventBody);
+
+      // The replay still offers the row to the conflict-safe insert — that is
+      // what repairs an alert lost between attempts — and still answers with the
+      // identity and the original recording time of the one alert that exists.
+      expect(entry.stateAdvanced).toBe(false);
+      expect(entry.alert).toEqual({
+        id: storedAlert.id,
+        createdAt: storedAlert.createdAt.toISOString(),
+      });
+      expect(mockPrisma.alertEvent.createMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('derives every persisted identity from the database, never from the request', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...baseRow, advancedTransition: 'ENTER' },
+      ]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([storedAlert]);
+
+      await post(validBody).expect(201);
+
+      const [[call]] = mockPrisma.alertEvent.createMany.mock.calls as Array<
+        [{ data: Array<Record<string, unknown>>; skipDuplicates: boolean }]
+      >;
+
+      // The tenant is the verified principal's, the device and observation
+      // instant come from the evaluated row, the source event is the stored one
+      // and the direction is the classification the database computed. The
+      // request body contributed nothing to any of them.
+      expect(call.skipDuplicates).toBe(true);
+      expect(call.data).toEqual([
+        {
+          tenantId: AUTH_TENANT,
+          trackedDeviceId: DEVICE_ID,
+          geofenceId: baseRow.geofenceId,
+          sourceLocationEventId: EVENT_ID,
+          transition: 'ENTER',
+          observedAt: new Date(OBSERVED_AT),
+        },
+      ]);
+    });
+
+    it.each([['tenantId'], ['transition'], ['alert']])(
+      'rejects a submission that tries to supply %s and writes nothing',
+      async (field) => {
+        await post({ ...validBody, [field]: OTHER_TENANT }).expect(400);
+
+        expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+        expect(mockPrisma.alertEvent.createMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('maps an alert-persistence failure to the sanitized 500 envelope', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...baseRow, advancedTransition: 'ENTER' },
+      ]);
+      mockPrisma.alertEvent.createMany.mockRejectedValue(
+        new Error(
+          'duplicate key value violates unique constraint "AlertEvent_crossing_key"',
+        ),
+      );
+
+      const res = await post(validBody).expect(500);
+      const body = res.body as ErrorBody;
+
+      expect(body.message).toBe('Internal server error');
+      expect(JSON.stringify(body)).not.toContain('AlertEvent');
+      expect(JSON.stringify(body)).not.toContain('unique constraint');
+    });
+
+    it('refuses to report a crossing whose alert did not come back', async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { ...baseRow, advancedTransition: 'ENTER' },
+      ]);
+      // The alert read-back finds nothing: the default queued result is empty.
+      // Answering 201 here would tell the client a crossing was recorded that
+      // the database has no row for. The sanitized envelope is the same one the
+      // service already uses for an impossible internal state.
+      const res = await post(validBody).expect(500);
+      const body = res.body as ErrorBody;
+
+      expect(body.message).toBe('Internal Server Error');
+      expect(JSON.stringify(body)).not.toContain('AlertEvent');
     });
   });
 

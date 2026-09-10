@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { GeofenceContainmentState, GeofenceTransition } from '@prisma/client';
 
 import { GeofenceTransitionDto } from './dto/geofence-transition-response.dto';
+import {
+  GeofenceAlertIndex,
+  GeofenceAlertService,
+} from './geofence-alert.service';
 import { roundDistanceMeters } from './geofence-evaluation.service';
+import { classifyTransition } from './geofence-transition.classification';
 import {
   GeofenceStoredStateRow,
   GeofenceTransitionQuery,
@@ -16,9 +20,10 @@ import {
  * device's position relative to each active geofence of its tenant, and advances
  * the minimum persistent state that makes the next such comparison possible.
  *
- * What this service does NOT do is as much of the contract as what it does. It
- * creates no alert, notification or delivery record and schedules no work; the
- * only row it writes is the current-state row the next comparison reads.
+ * Since GF-7 an accepted `ENTER` or `EXIT` also carries the durable alert that
+ * crossing resolved to. This service does not decide, create or deduplicate that
+ * alert — GeofenceAlertService does, inside the transition transaction — and it
+ * still schedules no work and delivers nothing.
  *
  * Every decision that could be wrong under concurrency is made by the database,
  * in one statement (see geofence-transition.query.ts). This class only labels
@@ -32,7 +37,10 @@ import {
  */
 @Injectable()
 export class GeofenceTransitionService {
-  constructor(private readonly transitionQuery: GeofenceTransitionQuery) {}
+  constructor(
+    private readonly transitionQuery: GeofenceTransitionQuery,
+    private readonly alerts: GeofenceAlertService,
+  ) {}
 
   /**
    * Returns one entry per active geofence of `tenantId`, ordered by ascending
@@ -48,10 +56,8 @@ export class GeofenceTransitionService {
     locationEventId: string,
     tenantId: string,
   ): Promise<GeofenceTransitionDto[]> {
-    const { rows, stored } = await this.transitionQuery.evaluateAndAdvance(
-      locationEventId,
-      tenantId,
-    );
+    const { rows, stored, alerts } =
+      await this.transitionQuery.evaluateAndAdvance(locationEventId, tenantId);
 
     const storedByGeofence = new Map(
       stored.map((row): [string, GeofenceStoredStateRow] => [
@@ -65,57 +71,39 @@ export class GeofenceTransitionService {
         row,
         locationEventId,
         storedByGeofence.get(row.geofenceId),
+        alerts,
       ),
     );
   }
 
+  /**
+   * Serializes one evaluated geofence.
+   *
+   * `classifyTransition` is the single authoritative rule, shared with the alert
+   * boundary that already persisted the crossings inside the transaction above,
+   * so the classification reported here and the alert attached to it describe the
+   * same event by construction. `alert` is added only for a crossing; the key is
+   * absent otherwise rather than present and null, so the additive GF-7 field
+   * cannot be mistaken for an alert that failed to materialize.
+   */
   private toTransition(
     row: GeofenceTransitionRow,
     locationEventId: string,
     stored: GeofenceStoredStateRow | undefined,
+    alerts: GeofenceAlertIndex,
   ): GeofenceTransitionDto {
+    const transition = classifyTransition(row, locationEventId, stored);
+    const alert = this.alerts.describe(row.geofenceId, transition, alerts);
+
     return {
       geofenceId: row.geofenceId,
       name: row.name,
       radiusMeters: row.radiusMeters,
       distanceMeters: roundDistanceMeters(row.distanceMeters),
       state: row.state,
-      transition: this.classify(row, locationEventId, stored),
+      transition,
       stateAdvanced: row.advancedTransition !== null,
+      ...(alert ? { alert } : {}),
     };
-  }
-
-  /**
-   * The database already classified every observation that advanced state, from
-   * the row it overwrote. Only the two non-advancing cases are decided here:
-   *
-   * - a replay of the event that wrote the current state answers with that
-   *   event's own stored classification, so ingesting the same event twice
-   *   cannot describe one crossing two different ways;
-   * - anything else is an observation older than the current state. It is
-   *   reported as a `STAY_*` at its own containment, never as `ENTER` or `EXIT`:
-   *   it is not evidence that the device crossed anything, and the state it
-   *   would have to be compared against belongs to a later observation.
-   *
-   * Conflicting-row locks protect the stored-state read through transaction
-   * completion. A missing row is a defensive fallback, not an expected
-   * deactivation interleaving.
-   */
-  private classify(
-    row: GeofenceTransitionRow,
-    locationEventId: string,
-    stored: GeofenceStoredStateRow | undefined,
-  ): GeofenceTransition {
-    if (row.advancedTransition !== null) {
-      return row.advancedTransition;
-    }
-
-    if (stored?.lastLocationEventId === locationEventId) {
-      return stored.lastTransition;
-    }
-
-    return row.state === GeofenceContainmentState.INSIDE
-      ? GeofenceTransition.STAY_INSIDE
-      : GeofenceTransition.STAY_OUTSIDE;
   }
 }

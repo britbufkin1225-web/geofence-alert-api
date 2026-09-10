@@ -103,6 +103,31 @@ Full contract: [gf4-location-event-ingestion.md](gf4-location-event-ingestion.md
   transition detection cannot be aimed at another device.
 - Both statements bind every value as a parameter. No identifier, coordinate or
   tenant id is interpolated into statement text.
+
+## Geofence alert events (GF-7, local only)
+
+- `AlertEvent.tenantId` is always the verified principal's tenant. The ingestion
+  DTO rejects unknown alert-specific fields. Device identity and observation
+  time are copied from the stored event after tenant-scoped deviceKey resolution
+  and validation of the submitted observedAt.
+- All three foreign keys are composite on `(id, tenantId)`, onto `Geofence`,
+  `TrackedDevice` and `LocationEvent`. PostgreSQL rejects any alert whose tenant
+  disagrees with its geofence, device or source event, so a cross-tenant alert is
+  structurally impossible. Cascades follow the same keys and therefore cannot
+  delete or alter another tenant's alerts.
+- `AlertEvent_crossing_key` is tenant-qualified in its own right, so two tenants
+  using the same external `deviceKey` cannot collide in deduplication or learn
+  that the other exists.
+- `AlertEvent_transition_crossing_check` restricts `transition` to `ENTER` and
+  `EXIT`. It does not prove a spatial crossing occurred. Direct SQL can fabricate
+  an allowed label; the application transaction establishes crossing semantics
+  and copies device and observation-time provenance.
+- A crossing-key conflict is reused after exact read-back; unrelated conflicts
+  fail safely. No constraint name, index
+  name, SQL fragment or driver detail reaches an API response, and the deduplication
+  key is never exposed.
+- Both statements bind every value as a parameter; the geofence list is bound with
+  `Prisma.join`, not interpolated.
 - Comparison and advancement are one atomic `INSERT ... ON CONFLICT DO UPDATE`,
   ordered by the source's `observedAt` with the event id as tie-break, so a
   concurrent, out-of-order or replayed submission cannot regress state or

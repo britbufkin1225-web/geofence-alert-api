@@ -50,6 +50,7 @@ interface TransitionBody {
     | 'STAY_INSIDE'
     | 'STAY_OUTSIDE';
   stateAdvanced: boolean;
+  alert?: { id: string; createdAt: string };
 }
 
 interface EventBody {
@@ -2020,7 +2021,17 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
   });
 
   describe('phase boundary', () => {
-    it('creates no alert, notification or delivery record', async () => {
+    /**
+     * GF-6 created no alert of any kind. GF-7 records exactly one durable alert
+     * per accepted crossing and still creates no notification or delivery record
+     * — the boundary moved by exactly one table column set, and no further.
+     *
+     * The alerting behaviour itself is proven in
+     * test/integration/geofence-alert.integration-spec.ts. What is asserted here
+     * is only that GF-6's own transition semantics did not acquire a second,
+     * quieter side effect.
+     */
+    it('creates one alert for the crossing, and nothing that delivers it', async () => {
       await createGeofence({
         tenantId: tenantAId,
         name: 'Depot',
@@ -2029,18 +2040,32 @@ describe('GF-6 geofence transition detection (real PostgreSQL/PostGIS integratio
       });
       await registerDevice(tokenA, 'device-1');
 
-      await ingest(tokenA, {
+      const baseline = await ingest(tokenA, {
         deviceKey: 'device-1',
         coordinates: FAR,
         observedAt: at(0),
       });
+
+      // The baseline is not a crossing, so nothing is recorded for it.
+      expect(await prisma.alertEvent.count()).toBe(0);
+      expect(baseline.geofenceTransitions[0].alert).toBeUndefined();
+
       await ingest(tokenA, {
         deviceKey: 'device-1',
         coordinates: AUSTIN,
         observedAt: at(1),
       });
 
-      expect(await prisma.alertEvent.count()).toBe(0);
+      const alerts = await prisma.alertEvent.findMany();
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0].transition).toBe('ENTER');
+
+      // Nothing about delivery exists on the row: no channel, recipient,
+      // attempt count or sent-at value was invented for a phase that sends
+      // nothing.
+      expect(alerts[0].message).toBeNull();
+      expect(alerts[0].eventType).toBeNull();
+      expect(alerts[0].source).toBeNull();
     });
 
     it('adds no transition-history table beyond the current-state row', async () => {

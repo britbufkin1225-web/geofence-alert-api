@@ -12,6 +12,8 @@ import { createPrismaService, truncateAll } from './support/database';
 describe('GF-3 database constraints (disposable PostgreSQL/PostGIS)', () => {
   let prisma: PrismaService;
   let tenantId: string;
+  let trackedDeviceId: string;
+  let locationEventId: string;
 
   const VALID = {
     latitude: 30.2672,
@@ -54,6 +56,31 @@ describe('GF-3 database constraints (disposable PostgreSQL/PostGIS)', () => {
       data: { name: 'Constraint Fixture Tenant' },
     });
     tenantId = tenant.id;
+
+    // GF-7 gave AlertEvent tenant-consistent provenance, so an alert row now
+    // needs a real device and a real source observation to point at. These are
+    // fixtures for the coordinate CHECK constraints below, which are unchanged.
+    const device = await prisma.trackedDevice.create({
+      data: {
+        tenantId,
+        deviceKey: 'constraint-fixture-device',
+        name: 'Constraint Fixture Device',
+      },
+    });
+    trackedDeviceId = device.id;
+
+    const event = await prisma.locationEvent.create({
+      data: {
+        tenantId,
+        trackedDeviceId: device.id,
+        eventKey: 'constraint-fixture-event',
+        observedAt: new Date('2026-09-09T06:00:00.000Z'),
+        latitude: VALID.latitude,
+        longitude: VALID.longitude,
+        accuracyMeters: 5,
+      },
+    });
+    locationEventId = event.id;
   });
 
   afterAll(async () => {
@@ -227,18 +254,22 @@ describe('GF-3 database constraints (disposable PostgreSQL/PostGIS)', () => {
       await expect(
         prisma.$executeRaw`
           INSERT INTO "AlertEvent"
-            ("id", "geofenceId", "eventType", "message", "latitude", "createdAt", "updatedAt")
-          VALUES ('bad-alert-lat', ${ALERT_GEOFENCE_ID}, 'ENTER', 'test', ${91}, NOW(), NOW())
+            ("id", "tenantId", "trackedDeviceId", "geofenceId", "sourceLocationEventId",
+             "transition", "observedAt", "latitude", "createdAt", "updatedAt")
+          VALUES ('bad-alert-lat', ${tenantId}, ${trackedDeviceId}, ${ALERT_GEOFENCE_ID},
+                  ${locationEventId}, 'ENTER', NOW(), ${91}, NOW(), NOW())
         `,
       ).rejects.toThrow(/AlertEvent_latitude_range_check/);
     });
 
-    it('allows null coordinates (no ingestion exists yet)', async () => {
+    it('allows null coordinates (GF-7 alerts never store any)', async () => {
       await expect(
         prisma.$executeRaw`
           INSERT INTO "AlertEvent"
-            ("id", "geofenceId", "eventType", "message", "createdAt", "updatedAt")
-          VALUES ('null-coord-alert', ${ALERT_GEOFENCE_ID}, 'ENTER', 'test', NOW(), NOW())
+            ("id", "tenantId", "trackedDeviceId", "geofenceId", "sourceLocationEventId",
+             "transition", "observedAt", "createdAt", "updatedAt")
+          VALUES ('null-coord-alert', ${tenantId}, ${trackedDeviceId}, ${ALERT_GEOFENCE_ID},
+                  ${locationEventId}, 'ENTER', NOW(), NOW(), NOW())
         `,
       ).resolves.toBe(1);
     });

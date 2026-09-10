@@ -36,13 +36,14 @@ iterating after `npm run test:db -- --keep`.
 
 ## Current Verified Test State
 
-The counts below include GF-6 hardening: both lifecycle lock interleavings,
-replay/stale conflict locks, real failure/retry recovery, and all four cascade
-paths. The focused GF-6 integration suite contains 54 tests.
+The counts below include the GF-7 alert suites. The focused GF-6 integration
+suite contains 54 tests; the focused GF-7 integration suite contains 59, of which
+eight are controlled concurrency interleavings confirmed through
+`pg_blocking_pids` rather than parallel-request bursts.
 
 ```text
-Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
-Integration     Test Suites: 8 passed    Tests: 263 passed
+Unit + HTTP     Test Suites: 18 passed   Tests: 437 passed
+Integration     Test Suites: 9 passed    Tests: 322 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -95,8 +96,18 @@ E2E             Test Suites: 1 passed    Tests: 1 passed
     (including the composite foreign keys that make a cross-tenant state row
     impossible), inactive and reactivated geofences, concurrent races proving a
     single state row and a deterministic winner, the sanitized error envelope
-    for a real database failure, and the absence of any alert or
-    transition-history table.
+    for a real database failure, and the phase boundary between transition state
+    and the single alert a crossing now produces.
+  - `geofence-alert.integration-spec.ts` — the GF-7 alert path end-to-end through
+    HTTP ingestion: which classifications become alerts and which are silent
+    (baseline, stay, stale, deactivation, reactivation, exact boundary),
+    deduplication across replays and retries, distinct alerts for distinct
+    crossings, source-event anchoring, ordering and tie-break safety, the
+    controlled concurrency interleavings, the transaction boundary proven by a
+    forced alert-insert failure and its converging retry, cross-tenant isolation
+    including the composite foreign keys and the crossing CHECK constraint, the
+    catalog proof for the uniqueness key, indexes, nullability and timestamp
+    types, and the absence of any delivery, queue or outbox surface.
 
 ### Disposable test database
 

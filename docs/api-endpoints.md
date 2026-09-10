@@ -12,8 +12,13 @@ This document outlines the **planned** API endpoints for the GeoFence Alert API.
 > below. **Point-in-circle evaluation (GF-5)** and **enter/exit transition
 > detection (GF-6)** are implemented — see [docs/api.md](api.md) and
 > [docs/gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
-> Alert events and all read/query routes for devices and events remain **not
-> implemented**. Several differences from this design exist in the current code:
+> **Durable alert-event creation (GF-7)** is implemented on a feature branch and
+> awaiting audit — see
+> [docs/gf7-geofence-alert-events.md](gf7-geofence-alert-events.md) — but it adds
+> **no route**: an accepted crossing is recorded and surfaced as an additive
+> `alert` field on the ingestion response. The `alert-events` read, query and
+> status routes drawn below, and all read/query routes for devices and events,
+> remain **not implemented**, as does alert delivery. Several differences from this design exist in the current code:
 >
 > - `/health` and `/status` are served **unversioned at the root**, not under
 >   `/api/v1` as drawn below.

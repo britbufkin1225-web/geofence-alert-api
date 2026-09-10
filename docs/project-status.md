@@ -25,9 +25,7 @@ by PostgreSQL/PostGIS over `geography` values, so it is boundary-inclusive and
 measured in meters, and matches are ordered deterministically by distance then
 geofence id.
 
-**GF-6 — deterministic geofence transition detection — is implemented locally on
-the `phase-gf-6-deterministic-geofence-transition-detection` feature branch and is
-not merged.** It classifies every accepted observation against every active
+**GF-6 — deterministic geofence transition detection — is merged.** It classifies every accepted observation against every active
 geofence of its tenant as `BASELINE_INSIDE`, `BASELINE_OUTSIDE`, `ENTER`, `EXIT`,
 `STAY_INSIDE` or `STAY_OUTSIDE`, and persists one current-state row per tenant,
 device and geofence so the next comparison is deterministic. Comparison and
@@ -37,8 +35,29 @@ replayed events can neither regress state nor fabricate a crossing. The
 classification is returned as an additive array on the existing ingestion
 response; GF-5's evaluation endpoint is unchanged and still read-only.
 
-Dwell detection, alerting and notification delivery remain planned future work.
-GF-6 creates no alert, notification or delivery record.
+**GF-7 — deterministic alert-event creation and deduplication — is implemented
+locally on the `phase-gf-7-deterministic-alert-event-creation-deduplication`
+feature branch and is awaiting independent audit; it is not merged.** It converts
+only authoritative accepted `ENTER` and `EXIT` crossings into durable, tenant-scoped
+alert events. Baselines, stays, stale observations, replay-only requests,
+deactivation and failure paths create no new alert. Deduplication is a database
+unique key on
+`(tenantId, trackedDeviceId, geofenceId, sourceLocationEventId, transition)`
+combined with a conflict-safe insert, so one crossing is one alert across retries,
+replays and concurrent duplicates; a crossing-key conflict is idempotent success
+when exact read-back recovers the alert. Unrelated conflicts fail safely. The alert commits in the same transaction as the transition
+advancement it describes, so an accepted crossing and its alert become durable
+together or neither does. Location-event creation remains outside that
+transaction, exactly as in GF-6: a failure there leaves the event stored, and an
+identical retry converges to exactly one alert unless a newer observation has
+superseded it. Composite foreign keys enforce tenant agreement, while the
+application copies device and timestamp provenance, so a cross-tenant alert cannot be stored even
+by a direct database write. The alert is exposed as one additive optional `alert`
+field on each transition entry of the existing ingestion response.
+
+Dwell detection, notification delivery (email, SMS, push, webhooks), asynchronous
+processing, and alert querying, acknowledgement and resolution remain planned
+future work. GF-7 creates no notification or delivery record and sends nothing.
 
 ## Completed Work
 
@@ -74,6 +93,10 @@ GF-6 creates no alert, notification or delivery record.
 - Added deterministic geofence transition detection with atomic, tenant-isolated
   per-device transition state and documented baseline, stale-event, replay and
   reactivation policies (GF-6)
+- Added deterministic, deduplicated alert-event creation for accepted enter/exit
+  crossings, committed in the same transaction as the transition state it
+  describes and enforced by a database unique key and tenant-consistent composite
+  foreign keys (GF-7, feature branch)
 
 ## Current Backend Capabilities
 
@@ -141,8 +164,9 @@ Current test coverage includes:
 
 Upcoming development work includes:
 
+- Alert delivery: notification channels and providers
+- Alert querying, acknowledgement and resolution endpoints
 - Dwell detection and polygon geofences
-- Alert domain planning
 - Location-event history and query endpoints
 - Request and response examples for API documentation
 - Portfolio polish and screenshots
@@ -164,14 +188,19 @@ Upcoming development work includes:
 | PostgreSQL/PostGIS foundation (GF-3) | Complete |
 | Location events (GF-4) | Complete |
 | Spatial evaluation (GF-5) | Complete |
-| Transition detection (GF-6) | Implemented on feature branch |
-| Alert workflow | Planned |
+| Transition detection (GF-6) | Complete |
+| Alert-event creation (GF-7) | Implemented on feature branch |
+| Alert delivery and management | Planned |
 | Documentation polish | In Progress |
 | Portfolio polish | Planned |
 
 ## Next Planned Phase
 
-**GF-7 — Alert generation.**
+**GF-8 — Alert delivery.**
 
-GF-5 is merged and GF-6 transition detection is implemented on its feature
-branch. Alert generation and delivery remain unimplemented future work.
+GF-6 is merged. GF-7 alert-event creation is implemented on its feature branch and
+awaiting independent audit: crossings are now recorded durably and exactly once.
+Delivering those records — notification channels, providers, retry and the
+asynchronous processing they need — remains unimplemented future work, as do dwell
+detection and the alert-management workflows (querying, acknowledgement,
+resolution).

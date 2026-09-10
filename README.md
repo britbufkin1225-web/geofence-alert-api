@@ -11,10 +11,11 @@ A backend API for managing geofence records, built with NestJS and Prisma.
 > `geography(Point, 4326)` centre with a GiST index (GF-3), and authenticated
 > location-event ingestion for tenant-owned tracked devices (GF-4) stores
 > observations the same way. Deterministic point-in-circle **evaluation** (GF-5)
-> is merged, and **enter/exit transition detection** (GF-6, feature branch)
-> classifies each accepted observation against the tenant's active geofences.
-> **Alert generation and notification delivery are still planned roadmap items and
-> are not implemented.** See
+> and **enter/exit transition detection** (GF-6) are merged, and **durable
+> alert-event creation** (GF-7, feature branch) records exactly one alert per
+> accepted crossing. **Notification delivery — email, SMS, push, webhooks — is
+> still a planned roadmap item and is not implemented; an alert is a stored
+> record, not a message.** See
 > [Currently Implemented vs Planned](#currently-implemented-vs-planned).
 
 ## Project Summary
@@ -56,8 +57,9 @@ the codebase provides the geofence-management foundation for that vision.
 - Deterministic, read-only point-in-circle geofence evaluation for a stored
   observation, decided by PostGIS `geography` semantics (GF-5)
 - Deterministic enter/exit transition detection with atomic, tenant-isolated
-  per-device transition state, returned on the ingestion response (GF-6, feature
-  branch)
+  per-device transition state, returned on the ingestion response (GF-6)
+- Durable, deduplicated alert events for accepted enter/exit crossings, created in
+  the same transaction as the transition they describe (GF-7, feature branch)
 - Unit, HTTP-level, and real-database integration tests
 
 **Planned but not yet implemented:**
@@ -242,7 +244,7 @@ primary keys:
 | Tenant | Implemented | Unit of data ownership and isolation |
 | Membership | Implemented | Explicit User ↔ Tenant relationship (unique per pair) |
 | Geofence | Implemented | Named circular geofence areas, owned by exactly one tenant, with a generated `geography(Point, 4326)` centre |
-| AlertEvent | Defined (schema only) | Alert records related to a geofence; no runtime logic yet |
+| AlertEvent | Implemented (GF-7, feature branch) | One durable record per accepted enter/exit crossing, deduplicated by a database unique key and tenant-scoped by composite foreign keys |
 
 Every geofence carries a required `tenantId` foreign key. Ownership is set
 server-side from the authenticated principal and cannot be supplied or changed by
@@ -401,18 +403,19 @@ Current test coverage includes:
 - Unknown-field / mass-assignment rejection and the stable error contract
 - No internal error-detail leakage on failure paths
 
-Verified test state after GF-6 hardening:
+Verified test state after GF-7:
 
 ```text
-Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
-Integration     Test Suites: 8 passed    Tests: 263 passed
+Unit + HTTP     Test Suites: 18 passed   Tests: 437 passed
+Integration     Test Suites: 9 passed    Tests: 322 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
 Additional planned testing includes:
 
-- Alert workflow behavior
-- Future alert delivery and dwell processing
+- Alert delivery and notification behavior
+- Alert acknowledgement and resolution workflows
+- Dwell processing
 
 ## Roadmap
 
@@ -431,8 +434,9 @@ Additional planned testing includes:
 | GF-3 | PostgreSQL/PostGIS spatial foundation | Complete |
 | GF-4 | Authenticated location-event ingestion | Complete |
 | GF-5 | Deterministic point-in-circle evaluation | Complete |
-| GF-6 | Deterministic geofence transition detection | Implemented (feature branch) |
-| GF-7+ | Alert generation and delivery | Planned |
+| GF-6 | Deterministic geofence transition detection | Complete |
+| GF-7 | Deterministic alert-event creation and deduplication | Implemented (feature branch) |
+| GF-8+ | Alert delivery, dwell detection, alert management | Planned |
 | Phase 10 | Documentation polish | In Progress |
 | Phase 11 | Portfolio polish | Planned |
 

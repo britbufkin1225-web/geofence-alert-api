@@ -39,8 +39,9 @@ export interface LocationEventResponseDto {
    * ascending distance and then ascending `geofenceId`, the same total order the
    * GF-5 evaluation endpoint uses. Empty when the tenant has no active geofence.
    *
-   * These are containment classifications only. GF-6 generates no alert and
-   * delivers no notification, so nothing here asserts that anyone was told.
+   * Each `ENTER` and `EXIT` entry additionally carries the durable alert that
+   * crossing produced (GF-7). That alert is a recorded fact only: nothing is
+   * queued, sent or scheduled, so nothing here asserts that anyone was told.
    */
   geofenceTransitions: GeofenceTransitionDto[];
 }

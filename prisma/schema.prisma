@@ -147,24 +147,114 @@ model Geofence {
   @@index([centerPoint], type: Gist, map: "Geofence_centerPoint_gist_idx")
 }
 
-// Schema-only model: no endpoint reads or writes AlertEvent yet, so its string
-// fields intentionally carry no database length bound — there is no API contract
-// to align them with. Bounds will be added with the alert workflow.
+// One durable geofence alert event (GF-7).
+//
+// GF-7 reuses this pre-existing table rather than introducing a competing one.
+// It was declared, unused, by the GF-1 baseline; every column it already had is
+// still here, and the phase adds only the provenance a crossing needs. A second
+// alert table would have split "what happened" across two places for no reason
+// beyond the shape of a model nothing had ever written.
+//
+// An alert row is an immutable statement that ONE observation moved ONE device
+// across the boundary of ONE geofence, in ONE direction. Nothing in it is
+// supplied by a caller: every identity below is copied from rows the database
+// itself resolved while advancing GF-6 transition state, inside that same
+// transaction. `transition` is constrained to ENTER and EXIT by a CHECK (see the
+// `geofence_alert_events` migration) — a baseline, a stay, a stale observation
+// and a retired state are not crossings. The CHECK only restricts labels;
+// application classification and its transaction establish spatial semantics.
+//
+// Deliberately absent: coordinates, the measured distance, the geofence radius
+// and any device or geofence snapshot. All of them are already reachable through
+// the foreign keys below, and a copy would be a second answer that can go stale.
+// Also absent is anything about delivery — no channel, recipient, attempt count
+// or sent-at column exists, because GF-7 records the alarm and delivers nothing.
+//
+// Legacy columns from the unused GF-1 declaration are reconciled conservatively
+// rather than removed:
+//   * `severity` and `status` keep their pre-existing defaults. GF-7 never reads,
+//     advances or exposes them; acknowledgement and resolution are a later phase.
+//   * `eventType` and `message` become nullable; `source` was already nullable.
+//     All three are left NULL. The
+//     authoritative crossing type is the typed `transition` column, so writing it
+//     a second time as free text would create a value that can disagree with it,
+//     and inventing a human-readable `message` would be fabricating a
+//     notification template for a phase that sends nothing. Relaxing NOT NULL on
+//     two unused text columns removes no guarantee anything depended on: the
+//     row's meaning is carried entirely by typed columns and foreign keys, which
+//     this phase tightens.
+//   * `latitude` and `longitude` stay nullable and unwritten, with their existing
+//     range CHECK constraints intact.
 model AlertEvent {
-  id         String        @id @default(cuid())
-  geofenceId String
-  eventType  String
-  severity   AlertSeverity @default(MEDIUM)
-  status     AlertStatus   @default(OPEN)
-  message    String
-  source     String?
-  latitude   Float?
-  longitude  Float?
+  id String @id @default(cuid())
 
-  geofence Geofence @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  // Provenance (GF-7). Together these are the alert: whose device, which
+  // geofence, which observation, and in which direction it crossed.
+  tenantId              String
+  trackedDeviceId       String
+  geofenceId            String
+  sourceLocationEventId String
+
+  // The crossing this alert records. Constrained to ENTER/EXIT in the database.
+  transition GeofenceTransition
+
+  // The source's own observation instant, copied from the location event that
+  // owns the crossing — never a server clock, and never a caller-supplied value
+  // taken on trust. `timestamptz(3)` matches LocationEvent.observedAt and
+  // GeofenceDeviceState.lastObservedAt exactly, so one instant survives every
+  // hop. `createdAt` below is the separate, server-owned bookkeeping time and
+  // keeps the plain `timestamp` type every other bookkeeping column uses.
+  observedAt DateTime @db.Timestamptz(3)
+
+  // Pre-existing GF-1 columns; see the note above.
+  eventType String?
+  severity  AlertSeverity @default(MEDIUM)
+  status    AlertStatus   @default(OPEN)
+  message   String?
+  source    String?
+  latitude  Float?
+  longitude Float?
+
+  // Every reference is composite on (id, tenantId), the same posture GF-6 gave
+  // GeofenceDeviceState: PostgreSQL itself rejects an alert whose tenant
+  // disagrees with its geofence, device or source event, so a cross-tenant alert
+  // cannot be stored even by code that bypasses the service layer. The GF-1
+  // single-column geofence foreign key is replaced by the composite one in the
+  // `geofence_alert_events` migration — it enforces everything the old key did,
+  // and tenant agreement as well.
+  //
+  // Deletion still cascades, and cannot reach across tenants: each referenced row
+  // is proven to belong to this alert's own tenant by the very same key.
+  geofence            Geofence      @relation(fields: [geofenceId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  trackedDevice       TrackedDevice @relation(fields: [trackedDeviceId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  sourceLocationEvent LocationEvent @relation(fields: [sourceLocationEventId, tenantId], references: [id, tenantId], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // The deduplication boundary, and the conflict target of the single
+  // conflict-safe insert in geofence-alert.query.ts.
+  //
+  // One accepted crossing is one (tenant, device, geofence, source observation,
+  // direction). Retrying a request, replaying the event, racing two identical
+  // submissions and repairing a half-finished ingestion all resolve to that same
+  // tuple, so the database — not an application pre-check — collapses them into
+  // one row.
+  //
+  // Direction is an explicit component of crossing identity. A normal geometry
+  // edit does not let equal or older observations advance again: the strict
+  // observation ordering still applies.
+  //
+  // Named explicitly because Prisma's generated name for five columns is
+  // truncated at PostgreSQL's 63-byte identifier limit and would be unreadable in
+  // catalog assertions.
+  @@unique([tenantId, trackedDeviceId, geofenceId, sourceLocationEventId, transition], map: "AlertEvent_crossing_key")
+  // Reading back the alerts one ingestion produced, and the source-event cascade,
+  // are both (tenantId, sourceLocationEventId) lookups. Tenant/geofence access
+  // and the geofence cascade are the second index. Tenant/device lookups need no
+  // index of their own: they are the leading columns of the unique key above.
+  @@index([tenantId, sourceLocationEventId])
+  @@index([tenantId, geofenceId])
 }
 
 // A tenant-owned location source (GF-4). This is the minimum device foundation
@@ -187,6 +277,7 @@ model TrackedDevice {
   tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   locationEvents LocationEvent[]
   geofenceStates GeofenceDeviceState[]
+  alertEvents    AlertEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -253,9 +344,11 @@ model LocationEvent {
   // LocationEvent.
   trackedDevice TrackedDevice @relation(fields: [trackedDeviceId, tenantId], references: [id, tenantId], onDelete: Cascade)
 
-  // Back-relation for GeofenceDeviceState.lastLocationEvent (GF-6). Location
-  // events stay append-only; nothing here makes them mutable.
+  // Back-relations for GeofenceDeviceState.lastLocationEvent (GF-6) and
+  // AlertEvent.sourceLocationEvent (GF-7). Location events stay append-only;
+  // nothing here makes them mutable.
   geofenceStates GeofenceDeviceState[]
+  alertEvents    AlertEvent[]
 
   // Idempotency boundary. Including tenantId is redundant with the composite
   // foreign key above, but it keeps the constraint (and every replay lookup that
