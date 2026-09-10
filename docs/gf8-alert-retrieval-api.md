@@ -114,7 +114,7 @@ the authenticated tenant scope in the SQL predicate itself.
 
 | Query parameter | Type | Description |
 | --- | --- | --- |
-| `page` | integer | Page number. Default `1`, minimum `1`. |
+| `page` | integer | Page number. Default `1`, minimum `1`. Bounded above so an offset the database cannot bind is a `400`, never a server error. |
 | `limit` | integer | Records per page. Default `10`, minimum `1`, maximum `100`. |
 | `transition` | string | `ENTER` or `EXIT`. Any other transition is rejected. |
 | `trackedDeviceId` | cuid | Exact device, within the caller's tenant. |
@@ -208,11 +208,50 @@ COMMITTED, so each statement takes its own snapshot: an ingestion that commits a
 new alert between them can leave `total` describing one instant and `data`
 another.
 
-The window is small, and the consequence is a count that is off by the number of
-alerts recorded during it — **not** a wrong page, a duplicated row or a missing
-one, because the ordering is total and both statements share one predicate.
-Closing the window entirely would mean REPEATABLE READ for a read endpoint, and
-GF-8 does not take that on.
+The window is small, and **within that one response** the consequence is a count
+that is off by the number of alerts recorded during it — not a wrong page, a
+duplicated row or a missing one, because `data` comes from a single snapshot and
+both statements share one predicate. Closing the window entirely would mean
+REPEATABLE READ for a read endpoint, and GF-8 does not take that on.
+
+That guarantee is about one request. It does **not** extend across requests.
+
+### Offset pagination drifts across requests while alerts are being ingested
+
+The total order makes a page stable for a database state that is not changing.
+It does not make a sequence of page requests stable while ingestion continues,
+and no ordering can: pages are cut by `OFFSET`, the list is newest-first, and a
+newly recorded alert is inserted at the front. Every alert after it shifts one
+position toward the back, so a client that has already read page 1 will see its
+last row again on page 2, and an alert can be skipped entirely if rows are
+removed between requests.
+
+Concretely, with `limit=2` and one alert ingested between the two requests:
+
+| Request | Rows returned |
+| --- | --- |
+| page 1 | `alert-J`, `alert-I` |
+| *(a newer alert commits)* | |
+| page 2 | `alert-I` *(seen again)*, `alert-H` |
+
+This is inherent to offset pagination and is the same behavior the geofence list
+endpoint has; it is recorded here because the fixed total order and the `sort`
+block in every response describe within-snapshot stability, which is easy to read
+as a promise about paging a live feed. A client that needs an exact,
+non-overlapping sweep of a feed under concurrent ingestion should bound the
+window it is reading with `observedFrom`/`observedBefore` — the half-open range
+makes adjacent windows tile exactly — rather than relying on `page` alone.
+Keyset/cursor pagination would close this properly and is deliberately not part
+of GF-8.
+
+### Deep offsets are bounded, not cheap
+
+`page` is validated against an upper bound as well as a lower one, so no request
+can produce an `OFFSET` the query engine cannot bind; an out-of-range page is a
+`400`, not a server error. The bound is defensive arithmetic, not a performance
+claim: PostgreSQL still walks every skipped index entry, so a deep page costs in
+proportion to its depth even though the index supplies the order with no sort
+step.
 
 ---
 

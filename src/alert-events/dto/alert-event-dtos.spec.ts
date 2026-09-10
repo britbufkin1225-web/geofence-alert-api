@@ -5,6 +5,7 @@ import {
   ALERT_EVENT_PAGINATION_DEFAULT_LIMIT,
   ALERT_EVENT_PAGINATION_DEFAULT_PAGE,
   ALERT_EVENT_PAGINATION_MAX_LIMIT,
+  ALERT_EVENT_PAGINATION_MAX_PAGE,
 } from './alert-event.constants';
 import { QueryAlertEventsDto } from './query-alert-events.dto';
 
@@ -122,6 +123,60 @@ describe('QueryAlertEventsDto', () => {
       await expect(
         failingProperties({ limit: ['10', '100'] }),
       ).resolves.toContain('limit');
+    });
+
+    it('accepts the deepest page whose skip is still an exact integer', async () => {
+      await expect(
+        failingProperties({
+          page: String(ALERT_EVENT_PAGINATION_MAX_PAGE),
+          limit: String(ALERT_EVENT_PAGINATION_MAX_LIMIT),
+        }),
+      ).resolves.toEqual([]);
+
+      // The bound exists to keep this arithmetic exact; if the constant is ever
+      // raised without re-deriving it, this is what notices.
+      const deepestSkip =
+        (ALERT_EVENT_PAGINATION_MAX_PAGE - 1) *
+        ALERT_EVENT_PAGINATION_MAX_LIMIT;
+      expect(Number.isSafeInteger(deepestSkip)).toBe(true);
+    });
+
+    it('rejects a page above the maximum rather than reaching the database', async () => {
+      await expect(
+        failingProperties({
+          page: String(ALERT_EVENT_PAGINATION_MAX_PAGE + 1),
+        }),
+      ).resolves.toContain('page');
+    });
+
+    it('rejects an integral page in scientific notation that overflows the offset', async () => {
+      // `1e20` is integral, so `@IsInt` and `@Min` both admit it. Without an
+      // upper bound it becomes a `skip` of 1e21 — larger than the 64-bit
+      // integer an OFFSET is bound as — and the query engine rejects it as a
+      // validation error, which surfaces as a 500 for a plainly bad request.
+      await expect(failingProperties({ page: '1e20' })).resolves.toContain(
+        'page',
+      );
+    });
+
+    it('rejects a page beyond the exact-integer range instead of rounding it', async () => {
+      // `Number('9007199254740993')` is 9007199254740992: accepting it would
+      // report a different page number than the caller asked for.
+      await expect(
+        failingProperties({ page: '9007199254740993' }),
+      ).resolves.toContain('page');
+    });
+
+    it('leaves Infinity and NaN rejected as before', async () => {
+      await expect(failingProperties({ page: 'Infinity' })).resolves.toContain(
+        'page',
+      );
+      await expect(failingProperties({ page: '1e309' })).resolves.toContain(
+        'page',
+      );
+      await expect(failingProperties({ page: 'NaN' })).resolves.toContain(
+        'page',
+      );
     });
   });
 

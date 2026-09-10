@@ -392,6 +392,30 @@ describe('Alert event retrieval (HTTP)', () => {
       expect(mockPrisma.alertEvent.findMany).not.toHaveBeenCalled();
     });
 
+    it('rejects an out-of-range page as 400 and never reaches the database', async () => {
+      // Each of these is an integral number that `@IsInt` and `@Min` accept on
+      // their own. Unbounded, they become a `skip` the query engine refuses,
+      // and the caller is told 500 for what is plainly a bad request. The
+      // assertion that matters is not only the status: it is that the read was
+      // never issued, so the failure is validation and not a database error
+      // being translated.
+      for (const queryString of [
+        '?page=1e20',
+        '?page=1e18',
+        '?page=9007199254740993',
+        `?page=${Number.MAX_SAFE_INTEGER}`,
+      ]) {
+        const response = await list(queryString);
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({
+          statusCode: 400,
+          error: 'Bad Request',
+        });
+      }
+      expect(mockPrisma.alertEvent.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.alertEvent.count).not.toHaveBeenCalled();
+    });
+
     it('rejects an invalid timestamp', async () => {
       await list('?observedFrom=yesterday').expect(400);
       await list('?observedFrom=2026-09-09T06:00:00').expect(400);

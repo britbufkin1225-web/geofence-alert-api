@@ -18,6 +18,30 @@ export const ALERT_EVENT_PAGINATION_MIN_LIMIT = 1;
 export const ALERT_EVENT_PAGINATION_MAX_LIMIT = 100;
 
 /**
+ * The largest accepted page number.
+ *
+ * `page` needs an upper bound for the same reason `limit` has one, and the
+ * reason is arithmetic rather than taste: the service computes
+ * `skip = (page - 1) * limit`, and `@IsInt` alone admits any integral double.
+ * `?page=1e20` is integral, passes `@Min`, and produces a `skip` of 1e21 —
+ * beyond the 64-bit integer Prisma binds an OFFSET as, which the query engine
+ * rejects as a validation error. That surfaces as a 500 for what is plainly a
+ * bad request. Values above 2^53 are worse than merely large: they are rounded
+ * on the way in, so the page a caller asked for and the page the response
+ * reports are different numbers.
+ *
+ * Derived rather than chosen, so it cannot drift from the arithmetic it exists
+ * to protect: at the maximum limit the deepest accepted `skip` is still an exact
+ * JavaScript integer, and therefore also a valid OFFSET. It is a defensive
+ * ceiling on malformed input, not a promise that offset pagination stays
+ * efficient at that depth — see the deep-offset note in
+ * docs/gf8-alert-retrieval-api.md.
+ */
+export const ALERT_EVENT_PAGINATION_MAX_PAGE = Math.floor(
+  Number.MAX_SAFE_INTEGER / ALERT_EVENT_PAGINATION_MAX_LIMIT,
+);
+
+/**
  * The column the list is totally ordered by, and the unique tie-breaker.
  *
  * `observedAt` is the authoritative source observation instant GF-7 copied from

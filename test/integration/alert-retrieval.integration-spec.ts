@@ -534,6 +534,41 @@ describe('GF-8 alert retrieval (real PostgreSQL/PostGIS integration)', () => {
       await list(tokenA, '?limit=101').expect(400);
       await list(tokenA, '?limit=100').expect(200);
     });
+
+    /**
+     * A page number is bounded above as well as below, against the real server.
+     *
+     * `@IsInt` admits any integral double, so before `page` carried a maximum
+     * every value here passed validation and became a `skip` PostgreSQL cannot
+     * be handed through Prisma — the request failed inside the query engine and
+     * the caller was told `500` for what is plainly a bad request. These run
+     * against the real database precisely because the defect only appeared once
+     * the statement was actually built: a mocked client accepts any `skip`.
+     */
+    it('rejects an out-of-range page as 400 rather than failing in the query engine', async () => {
+      for (const page of [
+        '1e18',
+        '1e20',
+        '9007199254740993',
+        String(Number.MAX_SAFE_INTEGER),
+      ]) {
+        const response = await list(tokenA, `?page=${page}`);
+        expect(response.status).toBe(400);
+      }
+    });
+
+    it('accepts the deepest page the bound allows, and reports it unrounded', async () => {
+      const deepest = 90071992547409;
+      const body = (
+        await list(tokenA, `?page=${deepest}&limit=100`).expect(200)
+      ).body as ListBody;
+
+      // Past the end of a six-alert tenant, so an empty success — and the page
+      // it echoes is the page that was asked for, not a rounded approximation.
+      expect(body.meta.page).toBe(deepest);
+      expect(body.data).toEqual([]);
+      expect(body.meta.total).toBe(6);
+    });
   });
 
   describe('filters', () => {

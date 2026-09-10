@@ -351,7 +351,7 @@ rows, not a snapshot of the crossing).
 
 | Query Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `page` | integer | No | Page number. Default `1`, minimum `1`. |
+| `page` | integer | No | Page number. Default `1`, minimum `1`. Bounded above so an offset the database cannot bind is a `400`, never a server error. |
 | `limit` | integer | No | Records per page. Default `10`, minimum `1`, maximum `100`. |
 | `transition` | string | No | `ENTER` or `EXIT`. Any other transition is rejected. |
 | `trackedDeviceId` | cuid | No | Exact device, within the caller's tenant. |

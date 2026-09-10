@@ -22,6 +22,7 @@ import {
   ALERT_EVENT_PAGINATION_DEFAULT_LIMIT,
   ALERT_EVENT_PAGINATION_DEFAULT_PAGE,
   ALERT_EVENT_PAGINATION_MAX_LIMIT,
+  ALERT_EVENT_PAGINATION_MAX_PAGE,
   ALERT_EVENT_PAGINATION_MIN_LIMIT,
 } from './alert-event.constants';
 
@@ -52,13 +53,20 @@ import {
  * reject all four. A `limit` above the maximum is REJECTED rather than clamped,
  * matching the geofence list endpoint: silently returning a different page size
  * than the one asked for makes a client's own pagination arithmetic wrong.
+ *
+ * Both bounds are two-sided. `@IsInt` accepts any integral double, including
+ * `1e20`, so a `@Min` on its own leaves `page` unbounded above and lets a
+ * request reach the query engine with a `skip` no OFFSET can hold. The maximum
+ * is therefore part of validation, not an assumption about how deep a real
+ * client pages.
  */
 export class QueryAlertEventsDto {
-  /** 1-based page number. */
+  /** 1-based page number, bounded to `ALERT_EVENT_PAGINATION_MAX_PAGE`. */
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(ALERT_EVENT_PAGINATION_MIN_LIMIT)
+  @Max(ALERT_EVENT_PAGINATION_MAX_PAGE)
   page?: number = ALERT_EVENT_PAGINATION_DEFAULT_PAGE;
 
   /** Page size, bounded to `ALERT_EVENT_PAGINATION_MAX_LIMIT`. */
