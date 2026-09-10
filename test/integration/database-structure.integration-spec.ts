@@ -48,6 +48,7 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
         '20260909063100_location_event_spatial_constraints',
         '20260909120000_geofence_device_transition_state',
         '20260909180000_geofence_alert_events',
+        '20260910120000_alert_event_observation_order_index',
       ]);
       expect(rows.every((row) => row.finished)).toBe(true);
       expect(rows.some((row) => row.rolled_back)).toBe(false);

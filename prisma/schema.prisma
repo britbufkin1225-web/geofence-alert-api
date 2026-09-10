@@ -255,6 +255,20 @@ model AlertEvent {
   // index of their own: they are the leading columns of the unique key above.
   @@index([tenantId, sourceLocationEventId])
   @@index([tenantId, geofenceId])
+  // The GF-8 read path: one tenant's alerts, newest observation first, ties
+  // broken by id. Every other index on this table leads with a column the list
+  // endpoint does not filter on by default, so without this one the unfiltered
+  // list is a scan of the tenant's entire alert history followed by a sort — the
+  // cost of which grows with everything the tenant has ever recorded, not with
+  // the page returned. Declared descending in both components so the ordering is
+  // satisfied by a forward scan of exactly this index.
+  //
+  // It is not a second copy of any existing index: `AlertEvent_crossing_key`
+  // leads with (tenantId, trackedDeviceId) and carries no observation time, and
+  // neither `(tenantId, sourceLocationEventId)` nor `(tenantId, geofenceId)` can
+  // order by `observedAt`. Those three still serve the filtered lookups they were
+  // created for; this one serves the ordering.
+  @@index([tenantId, observedAt(sort: Desc), id(sort: Desc)])
 }
 
 // A tenant-owned location source (GF-4). This is the minimum device foundation

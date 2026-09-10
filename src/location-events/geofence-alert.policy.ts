@@ -51,6 +51,21 @@ export const ALERT_PRODUCING_TRANSITIONS: readonly GeofenceTransition[] = [
  */
 export function isAlertProducingTransition(
   transition: GeofenceTransition,
-): boolean {
+): transition is AlertProducingTransition {
   return ALERT_PRODUCING_TRANSITIONS.includes(transition);
 }
+
+/**
+ * The two labels a stored alert's `transition` can carry.
+ *
+ * Additive: it narrows nothing that already existed and changes no runtime
+ * value. It exists so the GF-8 read contract can state, in its own types, that
+ * an alert is only ever an `ENTER` or an `EXIT` — the same restriction
+ * `ALERT_PRODUCING_TRANSITIONS` applies at persistence and
+ * `AlertEvent_transition_crossing_check` enforces in PostgreSQL. Declaring it
+ * here rather than beside the read contract is what keeps the read and the write
+ * reading from one definition of what an alert is.
+ */
+export type AlertProducingTransition =
+  | typeof GeofenceTransition.ENTER
+  | typeof GeofenceTransition.EXIT;

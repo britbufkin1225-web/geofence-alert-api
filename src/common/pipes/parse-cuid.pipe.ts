@@ -27,7 +27,16 @@ import {
  * default applies, so the existing class-reference call sites keep working
  * unchanged.
  */
-const CUID_PATTERN = /^c[a-z0-9]{24}$/;
+/**
+ * The identifier format every model in this schema uses (`@default(cuid())`).
+ *
+ * Exported so query DTOs that accept an id as a *filter* validate it against
+ * exactly the same pattern this pipe applies to a route parameter. A second
+ * regex written next to a filter could drift from this one, and a filter that
+ * accepted an id shape the pipe rejects would be a validation gap rather than a
+ * cosmetic inconsistency.
+ */
+export const CUID_PATTERN = /^c[a-z0-9]{24}$/;
 
 @Injectable()
 export class ParseCuidPipe implements PipeTransform<string, string> {

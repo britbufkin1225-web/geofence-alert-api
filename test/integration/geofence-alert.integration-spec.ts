@@ -2007,6 +2007,12 @@ describe('GF-7 geofence alert events (real PostgreSQL/PostGIS integration)', () 
         'AlertEvent_crossing_key',
         'AlertEvent_pkey',
         'AlertEvent_tenantId_geofenceId_idx',
+        // GF-8 added the ordering index the tenant-scoped alert list reads
+        // through. It is listed here because this assertion is deliberately
+        // exhaustive — "and no more" is the point of it, and an index nobody
+        // declared appearing on this table should still fail. The three GF-7
+        // indexes above are unchanged, and GF-8 dropped and replaced nothing.
+        'AlertEvent_tenantId_observedAt_id_idx',
         'AlertEvent_tenantId_sourceLocationEventId_idx',
       ]);
     });

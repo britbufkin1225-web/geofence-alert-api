@@ -35,9 +35,7 @@ replayed events can neither regress state nor fabricate a crossing. The
 classification is returned as an additive array on the existing ingestion
 response; GF-5's evaluation endpoint is unchanged and still read-only.
 
-**GF-7 — deterministic alert-event creation and deduplication — is implemented
-locally on the `phase-gf-7-deterministic-alert-event-creation-deduplication`
-feature branch and is awaiting independent audit; it is not merged.** It converts
+**GF-7 — deterministic alert-event creation and deduplication — is merged.** It converts
 only authoritative accepted `ENTER` and `EXIT` crossings into durable, tenant-scoped
 alert events. Baselines, stays, stale observations, replay-only requests,
 deactivation and failure paths create no new alert. Deduplication is a database
@@ -55,9 +53,26 @@ application copies device and timestamp provenance, so a cross-tenant alert cann
 by a direct database write. The alert is exposed as one additive optional `alert`
 field on each transition entry of the existing ingestion response.
 
+**GF-8 — authenticated tenant-scoped alert retrieval — is implemented locally on
+the `phase-gf-8-authenticated-tenant-scoped-alert-retrieval-api` feature branch
+and is awaiting independent audit; it is not merged.** It exposes those durable
+alerts to the tenant that owns them through two read-only routes,
+`GET /api/v1/alert-events` and `GET /api/v1/alert-events/:id`. The collection is
+bounded (page/limit, maximum 100, rejected rather than clamped), filtered by
+exact indexed values only (crossing direction, device, geofence, source event and
+a half-open observation window), and totally ordered by the source observation
+instant descending with the alert id as a unique tie-breaker, so equal timestamps
+cannot put one alert on two adjacent pages. Tenant scope is part of the database
+predicate on both routes, so another tenant's alert is never selected rather than
+being fetched and then rejected, and a foreign id is indistinguishable from one
+that names nothing. Both routes are read-only: no GET creates, changes or
+regenerates an alert. GF-8 required one forward-only index and changed no column,
+table or constraint.
+
 Dwell detection, notification delivery (email, SMS, push, webhooks), asynchronous
-processing, and alert querying, acknowledgement and resolution remain planned
-future work. GF-7 creates no notification or delivery record and sends nothing.
+processing, and alert acknowledgement and resolution remain planned future work.
+Neither GF-7 nor GF-8 creates a notification or delivery record, and neither sends
+anything.
 
 ## Completed Work
 
@@ -96,7 +111,11 @@ future work. GF-7 creates no notification or delivery record and sends nothing.
 - Added deterministic, deduplicated alert-event creation for accepted enter/exit
   crossings, committed in the same transaction as the transition state it
   describes and enforced by a database unique key and tenant-consistent composite
-  foreign keys (GF-7, feature branch)
+  foreign keys (GF-7)
+- Added authenticated, tenant-scoped, read-only alert retrieval: a bounded,
+  filtered, totally ordered collection endpoint and a single-record endpoint over
+  the durable GF-7 alerts, with tenant scope in the database predicate on both
+  (GF-8, feature branch)
 
 ## Current Backend Capabilities
 
@@ -123,11 +142,11 @@ The backend currently supports:
 
 ## Current Testing State
 
-Verified test state after GF-6 hardening:
+Verified test state on the GF-8 feature branch:
 
 ```text
-Unit + HTTP     Test Suites: 16 passed   Tests: 387 passed
-Integration     Test Suites: 8 passed    Tests: 263 passed
+Unit + HTTP     Test Suites: 21 passed   Tests: 531 passed
+Integration     Test Suites: 10 passed   Tests: 383 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 
@@ -159,6 +178,15 @@ Current test coverage includes:
   preservation, CHECK constraints (including `NaN`), the composite foreign key
   binding event tenant to device tenant, cascade behavior, and the idempotency
   unique index
+- Alert retrieval (GF-8): the authentication matrix on both read routes,
+  cross-tenant list and detail isolation against real PostgreSQL, foreign and
+  nonexistent identifiers being externally indistinguishable, rejection of
+  caller-supplied tenant values in query and header, deterministic ordering
+  proven on alerts that share an observation instant exactly, page boundaries
+  that neither repeat nor drop an alert, exact filter semantics, inclusive and
+  exclusive time-bound behavior tested at the boundary millisecond, executable
+  proof that no GET writes a row or advances transition state, and query plans
+  inspected against a 2,000-alert fixture
 
 ## Known Planned Work
 
@@ -189,18 +217,19 @@ Upcoming development work includes:
 | Location events (GF-4) | Complete |
 | Spatial evaluation (GF-5) | Complete |
 | Transition detection (GF-6) | Complete |
-| Alert-event creation (GF-7) | Implemented on feature branch |
+| Alert-event creation (GF-7) | Complete |
+| Alert retrieval API (GF-8) | Implemented on feature branch |
 | Alert delivery and management | Planned |
 | Documentation polish | In Progress |
 | Portfolio polish | Planned |
 
 ## Next Planned Phase
 
-**GF-8 — Alert delivery.**
+**Alert delivery and management.**
 
-GF-6 is merged. GF-7 alert-event creation is implemented on its feature branch and
-awaiting independent audit: crossings are now recorded durably and exactly once.
-Delivering those records — notification channels, providers, retry and the
-asynchronous processing they need — remains unimplemented future work, as do dwell
-detection and the alert-management workflows (querying, acknowledgement,
-resolution).
+GF-7 is merged: crossings are recorded durably and exactly once. GF-8 is
+implemented on its feature branch and awaiting independent audit: the tenant that
+owns those records can now read them back deterministically. Delivering them —
+notification channels, providers, retry and the asynchronous processing they need
+— remains unimplemented future work, as do dwell detection and the alert-management
+workflows (acknowledgement and resolution).

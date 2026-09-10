@@ -239,11 +239,7 @@ Semantics:
 GF-6 itself creates no alert, notification or delivery record. See
 [gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
 
-## Geofence Alerts on Ingestion (GF-7, local only)
-
-Implemented locally on the
-`phase-gf-7-deterministic-alert-event-creation-deduplication` branch and awaiting
-independent audit; **not merged**.
+## Geofence Alerts on Ingestion (GF-7, merged)
 
 GF-7 adds one optional field, `alert`, to each entry of the same
 `geofenceTransitions` array. There is no new route, and every field described
@@ -299,6 +295,127 @@ Semantics:
 GF-7 creates **no** notification or delivery record. An alert is a recorded fact,
 not a message, and nothing in this shape asserts that anyone was notified. See
 [gf7-geofence-alert-events.md](gf7-geofence-alert-events.md).
+
+---
+
+## Alert Retrieval Endpoints (GF-8, local only)
+
+Implemented locally on the
+`phase-gf-8-authenticated-tenant-scoped-alert-retrieval-api` branch and awaiting
+independent audit; **not merged**.
+
+```text
+GET /api/v1/alert-events
+GET /api/v1/alert-events/:id
+```
+
+Read-only. GF-8 adds no way to create, change, acknowledge, resolve, delete or
+deliver an alert, and a `POST`, `PUT`, `PATCH` or `DELETE` to either path is not
+routed.
+
+Both require a bearer token. The tenant is taken from the verified principal and
+is part of the database predicate; a `tenantId` (or any other ownership)
+query parameter is rejected as an unknown property, and headers outside the auth
+contract are not read. An alert belonging to another tenant is reported exactly
+as one that does not exist.
+
+### Alert response
+
+Both endpoints return the same eight fields, from one explicit mapper:
+
+```json
+{
+  "id": "clx0000000000000000000009",
+  "tenantId": "clx0000000000000000000001",
+  "transition": "ENTER",
+  "observedAt": "2026-09-09T06:00:00.000Z",
+  "createdAt": "2026-09-09T06:00:01.482Z",
+  "trackedDeviceId": "clx0000000000000000000003",
+  "geofenceId": "clx0000000000000000000005",
+  "sourceLocationEventId": "clx0000000000000000000007"
+}
+```
+
+`transition` is only ever `ENTER` or `EXIT`. `observedAt` is the source's own
+observation instant — the value the list is ordered and filtered by; `createdAt`
+is when this server recorded the alert, and the two can be far apart when a
+device flushes a back-dated observation.
+
+Deliberately absent: `severity` and `status` (unwritten legacy columns — there is
+no acknowledgement workflow to report), `eventType` / `message` / `source` /
+`latitude` / `longitude` (`NULL` on every alert), `updatedAt` (an alert is
+immutable), and the geofence name and device label (current values of mutable
+rows, not a snapshot of the crossing).
+
+### Alert list query parameters
+
+| Query Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | integer | No | Page number. Default `1`, minimum `1`. |
+| `limit` | integer | No | Records per page. Default `10`, minimum `1`, maximum `100`. |
+| `transition` | string | No | `ENTER` or `EXIT`. Any other transition is rejected. |
+| `trackedDeviceId` | cuid | No | Exact device, within the caller's tenant. |
+| `geofenceId` | cuid | No | Exact geofence, within the caller's tenant. |
+| `sourceLocationEventId` | cuid | No | Every alert one ingestion produced. |
+| `observedFrom` | ISO-8601 instant | No | **Inclusive** lower bound on `observedAt`. |
+| `observedBefore` | ISO-8601 instant | No | **Exclusive** upper bound on `observedAt`. |
+
+Every filter is exact and is conjoined with tenant scope in the query itself.
+There is no free-text search, caller-chosen sort, field selection or relation
+expansion.
+
+The observation window is half-open, `[observedFrom, observedBefore)`, so
+adjacent windows tile without gap or overlap. Timestamps must carry an explicit
+`Z` or numeric offset. A window whose upper bound is earlier than its lower bound
+is a `400`; bounds that are equal describe an empty window and are accepted. Both
+bounds apply to `observedAt` and never to `createdAt`.
+
+### Alert list response envelope
+
+```json
+{
+  "data": [],
+  "meta": {
+    "total": 0,
+    "count": 0,
+    "page": 1,
+    "limit": 10,
+    "totalPages": 0,
+    "hasNextPage": false,
+    "hasPreviousPage": false,
+    "filters": {
+      "transition": null,
+      "trackedDeviceId": null,
+      "geofenceId": null,
+      "sourceLocationEventId": null,
+      "observedFrom": null,
+      "observedBefore": null
+    },
+    "sort": { "sortBy": "observedAt", "sortOrder": "desc", "tieBreaker": "id" }
+  }
+}
+```
+
+- The order is total and fixed: `observedAt` descending, ties broken by `id`
+  descending. One observation can cross several geofences at the same instant, so
+  the unique tie-breaker is what keeps one alert off two adjacent pages.
+- `total` counts every match across all pages; `count` is what this page carries.
+- `filters` echoes what was applied; `null` means "not filtered".
+- A `limit` above `100` is **rejected**, not clamped.
+- A tenant with no alerts, and a page past the last one, both return `200` with an
+  empty collection — never `404`.
+- Read consistency: the items and the total are two statements in one READ
+  COMMITTED transaction, so a concurrent ingestion can leave `total` slightly
+  ahead of or behind `data`. The ordering is total and both statements share one
+  predicate, so this cannot duplicate or drop a row — only the count can be off.
+
+A migration was required for one index,
+`AlertEvent_tenantId_observedAt_id_idx`; no column, table or constraint changed.
+See [gf8-alert-retrieval-api.md](gf8-alert-retrieval-api.md).
+
+Alert acknowledgement, resolution, deletion, notification delivery, webhooks,
+asynchronous processing, dwell and analytics remain **deferred** and have no
+endpoint.
 
 ---
 

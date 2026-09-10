@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AlertEventsModule } from './alert-events/alert-events.module';
 import { AuthModule } from './auth/auth.module';
 import { envValidationSchema } from './config/env.validation';
 import { GeofencesModule } from './geofences/geofences.module';
@@ -24,6 +25,7 @@ import { TrackedDevicesModule } from './tracked-devices/tracked-devices.module';
     GeofencesModule,
     TrackedDevicesModule,
     LocationEventsModule,
+    AlertEventsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

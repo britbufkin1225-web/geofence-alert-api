@@ -167,17 +167,23 @@ Current implemented endpoints:
 | DELETE | `/api/v1/geofences/:id` | Delete a geofence by ID (own tenant only) | Bearer | Complete |
 | POST | `/api/v1/tracked-devices` | Register a location source owned by the caller's tenant | Bearer | Complete (GF-4) |
 | POST | `/api/v1/location-events` | Ingest one observation from one of those devices | Bearer | Complete (GF-4) |
+| GET | `/api/v1/alert-events` | List the caller tenant's durable alert events | Bearer | Local only (GF-8, awaiting audit) |
+| GET | `/api/v1/alert-events/:id` | Retrieve one alert event by ID (own tenant only) | Bearer | Local only (GF-8, awaiting audit) |
 
 A geofence that exists but belongs to another tenant is reported as `404 Not
 Found` — the API does not confirm the existence of resources outside the
-caller's tenant.
+caller's tenant. The same applies to alert events.
+
+The two alert-event routes are read-only: GF-8 adds no way to create, change,
+acknowledge, resolve, delete or deliver an alert. See
+[docs/gf8-alert-retrieval-api.md](docs/gf8-alert-retrieval-api.md).
 
 Planned future endpoints (not implemented):
 
 | Method | Endpoint | Purpose | Status |
 | --- | --- | --- | --- |
-| GET | `/api/v1/alert-events` | List alert events | Planned |
 | GET | `/api/v1/location-events` | Query location history | Planned |
+| PATCH | `/api/v1/alert-events/:id` | Acknowledge or resolve an alert | Planned |
 
 ### Geofence Query Parameters
 
@@ -191,6 +197,29 @@ The `GET /api/v1/geofences` endpoint supports pagination, filtering, and sorting
 | `search` | string | No | Case-sensitive name substring filter (max 100 characters). |
 | `sortBy` | string | No | One of `name`, `createdAt`, `updatedAt`, `radiusMeters`, `isActive`. Default `createdAt`. |
 | `sortOrder` | string | No | `asc` or `desc`. Default `desc`. |
+
+### Alert Event Query Parameters (GF-8)
+
+The `GET /api/v1/alert-events` endpoint supports bounded pagination and exact
+filters. Every filter is conjoined with the authenticated tenant scope in the
+database query itself.
+
+| Query Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | integer | No | Page number. Default `1`, minimum `1`. |
+| `limit` | integer | No | Records per page. Default `10`, minimum `1`, maximum `100`. Above the maximum is rejected, not clamped. |
+| `transition` | string | No | `ENTER` or `EXIT`. Any other transition is rejected. |
+| `trackedDeviceId` | cuid | No | Exact device, within the caller's tenant. |
+| `geofenceId` | cuid | No | Exact geofence, within the caller's tenant. |
+| `sourceLocationEventId` | cuid | No | Every alert one ingestion produced. |
+| `observedFrom` | ISO-8601 instant | No | **Inclusive** lower bound on `observedAt`. |
+| `observedBefore` | ISO-8601 instant | No | **Exclusive** upper bound on `observedAt`. |
+
+Results are totally ordered by `observedAt` descending, ties broken by `id`
+descending — one observation can cross several geofences at the same instant, so
+the unique tie-breaker is what keeps an alert off two adjacent pages. There is no
+caller-chosen sort, free-text search, field selection or relation expansion. An
+empty tenant and a page past the end both return `200` with an empty collection.
 
 ### Validation Limits
 

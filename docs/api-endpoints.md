@@ -12,13 +12,17 @@ This document outlines the **planned** API endpoints for the GeoFence Alert API.
 > below. **Point-in-circle evaluation (GF-5)** and **enter/exit transition
 > detection (GF-6)** are implemented — see [docs/api.md](api.md) and
 > [docs/gf6-geofence-transition-detection.md](gf6-geofence-transition-detection.md).
-> **Durable alert-event creation (GF-7)** is implemented on a feature branch and
-> awaiting audit — see
+> **Durable alert-event creation (GF-7)** is merged — see
 > [docs/gf7-geofence-alert-events.md](gf7-geofence-alert-events.md) — but it adds
 > **no route**: an accepted crossing is recorded and surfaced as an additive
-> `alert` field on the ingestion response. The `alert-events` read, query and
-> status routes drawn below, and all read/query routes for devices and events,
-> remain **not implemented**, as does alert delivery. Several differences from this design exist in the current code:
+> `alert` field on the ingestion response. **Authenticated tenant-scoped alert
+> retrieval (GF-8)** is implemented on a feature branch and awaiting audit — see
+> [docs/gf8-alert-retrieval-api.md](gf8-alert-retrieval-api.md) — and implements
+> the two **read** routes drawn below, `GET /api/v1/alert-events` and
+> `GET /api/v1/alert-events/:id`, with a bounded, filtered, totally ordered
+> collection contract. The `PATCH` status route below is **not implemented**, nor
+> is alert delivery, nor are the read/query routes for devices and events.
+> Several differences from this design exist in the current code:
 >
 > - `/health` and `/status` are served **unversioned at the root**, not under
 >   `/api/v1` as drawn below.

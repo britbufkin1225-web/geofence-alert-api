@@ -1,4 +1,8 @@
-import { ValidateBy, ValidationOptions } from 'class-validator';
+import {
+  ValidateBy,
+  type ValidationArguments,
+  type ValidationOptions,
+} from 'class-validator';
 
 /**
  * ISO-8601 date-time with an explicit UTC designator or numeric offset.
@@ -137,6 +141,61 @@ export function IsNotBeyondFutureSkew(
           return `must not be more than ${Math.floor(
             maxSkewMs / 1000,
           )} seconds in the future`;
+        },
+      },
+    },
+    validationOptions,
+  );
+}
+
+/**
+ * Rejects an instant that is earlier than the instant held by a sibling
+ * property — the upper bound of a time window, checked against its lower bound.
+ *
+ * A reversed window is a caller mistake, not a query that legitimately matches
+ * nothing: `from` after `to` describes an interval that cannot exist, and
+ * answering it with an empty page would hide the mistake behind a successful
+ * response. It is therefore refused by the same validation pipe, in the same
+ * error envelope, as a malformed timestamp.
+ *
+ * An equal pair is NOT refused. With a half-open window the two bounds meeting
+ * describes a genuinely empty interval, which is what a caller stepping through
+ * adjacent windows produces at a boundary, and an empty page is the honest
+ * answer to it.
+ *
+ * When either value is absent or is not a strict ISO-8601 instant the check
+ * passes: an open-ended window is valid, and a malformed bound is already
+ * reported by {@link IsStrictIsoDateTime} on the property that owns it. Adding a
+ * second complaint about the same value would only make the error harder to act
+ * on.
+ */
+export function IsNotBeforeInstantProperty(
+  lowerBoundProperty: string,
+  validationOptions?: ValidationOptions,
+) {
+  return ValidateBy(
+    {
+      name: 'isNotBeforeInstantProperty',
+      constraints: [lowerBoundProperty],
+      validator: {
+        validate(value: unknown, args?: ValidationArguments): boolean {
+          const upper = parseStrictIsoDateTime(value);
+          if (!upper) {
+            return true;
+          }
+
+          const sibling = (
+            args?.object as Record<string, unknown> | undefined
+          )?.[lowerBoundProperty];
+          const lower = parseStrictIsoDateTime(sibling);
+          if (!lower) {
+            return true;
+          }
+
+          return upper.getTime() >= lower.getTime();
+        },
+        defaultMessage(): string {
+          return `must not be earlier than ${lowerBoundProperty}`;
         },
       },
     },
