@@ -5,9 +5,9 @@ import { GeofenceTransition, Prisma } from '@prisma/client';
  * One crossing that the database has already accepted, ready to be recorded.
  *
  * Every field is copied from a row PostgreSQL produced while advancing GF-6
- * transition state in the current transaction. None of them is, or is derived
- * from, request input: the device and the observation instant come from the
- * stored location event, the geofence from the evaluated set, and the direction
+ * transition state in the current transaction. The device and instant come from
+ * validated ingestion input through the stored location event, the geofence
+ * from the evaluated set, and the direction
  * from the classification the upsert computed.
  */
 export interface GeofenceAlertCandidate {
@@ -42,12 +42,10 @@ export interface GeofenceAlertRow {
  *   * An alert whose direction disagrees with the stored crossing cannot be
  *     returned at all.
  *
- * The join also makes the transaction boundary load-bearing rather than merely
- * intended. When an observation advances state, the `GeofenceDeviceState` row
- * this join needs was written by the upsert moments earlier and is not yet
- * committed, so it is visible only from inside that transaction. Running this
- * read on any other connection returns nothing and fails the request instead of
- * quietly recording an alert beside a transition that may never commit.
+ * The join sees this transaction's uncommitted state writes. It is an additional
+ * consistency check, not an atomicity mechanism on its own: an insert on another
+ * connection could commit before read-back fails. Sharing the transaction client
+ * for advancement, insertion and read-back is what prevents orphan writes.
  *
  * Every value is a bound parameter; no identifier or id is interpolated into the
  * statement text. Exported so tests can read exactly this statement.

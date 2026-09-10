@@ -26,19 +26,16 @@
 --   2. The `AlertEvent_transition_crossing_check` CHECK constraint at the end was
 --      ADDED by hand. Prisma has no way to declare a CHECK constraint in the
 --      schema, and it does not read them back either, so this addition creates no
---      drift. It is what makes "only a real crossing is an alert" a property of
---      the database rather than a property of the service that happens to write
---      it: a baseline, a stay or a stale observation cannot be recorded as an
---      alert by any code path, including a direct SQL session.
+--      drift. It restricts transition labels to ENTER/EXIT, not spatial history.
+--      Direct SQL can fabricate an allowed label; application classification
+--      and the shared transaction establish genuine crossing semantics.
 --
 -- Everything else below is Prisma's own output, unmodified.
 --
 -- The five new columns are NOT NULL without a backfill default, which is safe
--- here for a specific reason rather than by assumption: "AlertEvent" has existed
--- since the GF-1 PostgreSQL baseline with no writer at all — no endpoint, no
--- service and no seed has ever inserted a row, and the model was documented as
--- "schema only" for exactly that reason. There is no historical row that could
--- lack provenance. If some environment did contain one, this statement fails
+-- only when the legacy table is empty. The repository had no production writer,
+-- but that does not prove deployed database contents. Verify this precondition
+-- before deployment. If an environment contains a legacy row, this statement fails
 -- loudly instead of inventing a tenant, a device or an observation time for it,
 -- which is the correct outcome.
 

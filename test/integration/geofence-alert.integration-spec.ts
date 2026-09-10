@@ -6,6 +6,7 @@ import request from 'supertest';
 
 import { AppModule } from '../../src/app.module';
 import { setupApp } from '../../src/app.setup';
+import { GeofenceAlertQuery } from '../../src/location-events/geofence-alert.query';
 import { GeofenceTransitionService } from '../../src/location-events/geofence-transition.service';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import {
@@ -19,10 +20,9 @@ import {
  * deduplication, driven through the authenticated HTTP ingestion path against
  * the disposable database that `npm run test:db` provisions and migrates.
  *
- * Everything that could be wrong about an alert is decided by the database —
- * whether a crossing happened, whether it is already recorded, whether the row
- * may reference another tenant, and what survives a failure halfway through — so
- * this is the suite that can prove it. Nothing is mocked anywhere in this file.
+ * This suite exercises application classification together with real database
+ * constraints, locking and transaction behavior. Audit interleavings wrap the real
+ * persistAndRead method to pause after insertion or force rollback; SQL is real.
  *
  * Concurrency is proven with controlled interleavings rather than a burst of
  * parallel requests. A burst exercises whichever schedule the operating system
@@ -864,7 +864,7 @@ describe('GF-7 geofence alert events (real PostgreSQL/PostGIS integration)', () 
       expect(stored[0].geofenceId).toBe(geofence.id);
     });
 
-    it('converges to the same state and alert set whichever order the events arrive in', async () => {
+    it('establishes a newest-first baseline and suppresses older observations as stale', async () => {
       const geofence = await createGeofence({
         tenantId: tenantAId,
         name: 'Depot',
@@ -897,6 +897,32 @@ describe('GF-7 geofence alert events (real PostgreSQL/PostGIS integration)', () 
       expect(state?.lastLocationEventId).toBe(newest.id);
       expect(state?.lastTransition).toBe('BASELINE_INSIDE');
       expect(await alertCount()).toBe(0);
+    });
+
+    it('records a crossing for chronological arrival of the same positions', async () => {
+      const geofence = await createGeofence({
+        tenantId: tenantAId,
+        name: 'Depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      const deviceId = await registerDevice(tokenA, 'device-1');
+      await baselineOutside(tokenA, 'device-1');
+      await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: FAR,
+        observedAt: at(1),
+      });
+      const newest = await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(2),
+      });
+      const state = await stateRow(tenantAId, deviceId, geofence.id);
+      expect(state?.state).toBe('INSIDE');
+      expect(state?.lastLocationEventId).toBe(newest.id);
+      expect(state?.lastTransition).toBe('ENTER');
+      expect(await alertCount()).toBe(1);
     });
 
     it('never points an alert at an event that is not the crossing it describes', async () => {
@@ -948,12 +974,98 @@ describe('GF-7 geofence alert events (real PostgreSQL/PostGIS integration)', () 
   });
 
   describe('controlled concurrency', () => {
+    it.each(['same', 'newer', 'older', 'rollback'] as const)(
+      'holds state and alert writes through transaction completion: %s contender',
+      async (scenario) => {
+        const geofence = await createGeofence({
+          tenantId: tenantAId,
+          name: 'Depot',
+          ...AUSTIN,
+          radiusMeters: 250,
+        });
+        const deviceId = await registerDevice(tokenA, 'device-1');
+        await baselineOutside(tokenA, 'device-1');
+        const before = await stateRow(tenantAId, deviceId, geofence.id);
+        const firstEvent = await prisma.locationEvent.create({
+          data: {
+            tenantId: tenantAId,
+            trackedDeviceId: deviceId,
+            eventKey: 'held',
+            accuracyMeters: 5,
+            observedAt: at(2),
+            ...AUSTIN,
+          },
+        });
+        const secondEvent =
+          scenario === 'same' || scenario === 'rollback'
+            ? firstEvent
+            : await prisma.locationEvent.create({
+                data: {
+                  tenantId: tenantAId,
+                  trackedDeviceId: deviceId,
+                  eventKey: 'contender',
+                  accuracyMeters: 5,
+                  observedAt: at(scenario === 'older' ? 1 : 3),
+                  ...AUSTIN,
+                },
+              });
+        const query = app.get(GeofenceAlertQuery);
+        const original = query.persistAndRead.bind(query);
+        const ready = gate();
+        const release = gate();
+        const spy = jest
+          .spyOn(query, 'persistAndRead')
+          .mockImplementationOnce(async (...args) => {
+            const result = await original(...args);
+            ready.open();
+            await release.waited;
+            if (scenario === 'rollback')
+              throw new Error('audit rollback after alert insertion');
+            return result;
+          });
+        const service = app.get(GeofenceTransitionService);
+        const first = service.evaluate(firstEvent.id, tenantAId).then(
+          (value) => ({ value, error: undefined }),
+          (error: unknown) => ({ value: undefined, error }),
+        );
+        let second: ReturnType<typeof service.evaluate> | undefined;
+        try {
+          await ready.waited;
+          expect(await stateRow(tenantAId, deviceId, geofence.id)).toEqual(
+            before,
+          );
+          expect(await alertCount()).toBe(0);
+          second = service.evaluate(secondEvent.id, tenantAId);
+          await waitUntilBlocked('WITH "evaluated" AS');
+        } finally {
+          release.open();
+          spy.mockRestore();
+        }
+        const left = await first;
+        const right = await second;
+        expect(Boolean(left.error)).toBe(scenario === 'rollback');
+        const stored = await alerts();
+        expect(stored).toHaveLength(1);
+        expect(stored[0].sourceLocationEventId).toBe(firstEvent.id);
+        const state = await stateRow(tenantAId, deviceId, geofence.id);
+        expect(state?.lastLocationEventId).toBe(
+          scenario === 'newer' ? secondEvent.id : firstEvent.id,
+        );
+        if (scenario === 'same' || scenario === 'rollback') {
+          expect(right[0].alert?.id).toBe(stored[0].id);
+          expect(right[0].stateAdvanced).toBe(scenario === 'rollback');
+        } else {
+          expect(right[0].alert).toBeUndefined();
+          expect(right[0].stateAdvanced).toBe(scenario === 'newer');
+        }
+      },
+    );
+
     /**
      * Sets up a device that has genuinely crossed into `geofence`, then deletes
      * the alert row. The crossing is still the authoritative stored state, so
-     * every replay is obliged to recreate the missing alert — which is exactly
-     * the state a request that failed after advancing would leave behind, and
-     * the only setup in which two concurrent replays both race to insert.
+     * replay can recreate the missing alert. This is an out-of-band deletion
+     * fixture, not a transaction failure outcome.
      */
     const crossingWithMissingAlert = async () => {
       const geofence = await createGeofence({
@@ -1699,6 +1811,74 @@ describe('GF-7 geofence alert events (real PostgreSQL/PostGIS integration)', () 
   });
 
   describe('persistent alert schema', () => {
+    it('does not mistake tenant-consistent SQL provenance for proof of a crossing', async () => {
+      const geofence = await createGeofence({
+        tenantId: tenantAId,
+        name: 'Depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      await registerDevice(tokenA, 'device-1');
+      const otherDevice = await registerDevice(tokenA, 'device-2');
+      const baseline = await baselineOutside(tokenA, 'device-1');
+      const fabricated = await prisma.alertEvent.create({
+        data: {
+          tenantId: tenantAId,
+          geofenceId: geofence.id,
+          trackedDeviceId: otherDevice,
+          sourceLocationEventId: baseline.id,
+          transition: 'ENTER',
+          observedAt: at(9),
+        },
+      });
+      expect(fabricated.trackedDeviceId).not.toBe(baseline.trackedDeviceId);
+      expect(fabricated.observedAt.toISOString()).not.toBe(baseline.observedAt);
+      expect(baseline.geofenceTransitions[0].transition).toBe(
+        'BASELINE_OUTSIDE',
+      );
+    });
+
+    it('rolls back a legitimate crossing on an unrelated uniqueness collision', async () => {
+      const geofence = await createGeofence({
+        tenantId: tenantAId,
+        name: 'Depot',
+        ...AUSTIN,
+        radiusMeters: 250,
+      });
+      const deviceId = await registerDevice(tokenA, 'device-1');
+      await baselineOutside(tokenA, 'device-1');
+      await ingest(tokenA, {
+        deviceKey: 'device-1',
+        coordinates: AUSTIN,
+        observedAt: at(1),
+      });
+      const before = await stateRow(tenantAId, deviceId, geofence.id);
+      await prisma.$executeRaw`CREATE UNIQUE INDEX gf7_audit_collision ON "AlertEvent" ("geofenceId")`;
+      try {
+        await ingest(tokenA, {
+          deviceKey: 'device-1',
+          eventKey: 'exit-collision',
+          coordinates: FAR,
+          observedAt: at(2),
+          expect: 500,
+        });
+        expect(await stateRow(tenantAId, deviceId, geofence.id)).toEqual(
+          before,
+        );
+        expect(await alertCount()).toBe(1);
+      } finally {
+        await prisma.$executeRaw`DROP INDEX gf7_audit_collision`;
+      }
+      await ingest(tokenA, {
+        deviceKey: 'device-1',
+        eventKey: 'exit-collision',
+        coordinates: FAR,
+        observedAt: at(2),
+        expect: 200,
+      });
+      expect(await alertCount()).toBe(2);
+    });
+
     it('deduplicates on the exact crossing identity, in the intended column order', async () => {
       const [row] = await prisma.$queryRaw<Array<{ definition: string }>>`
         SELECT pg_get_indexdef(i.indexrelid) AS definition
@@ -1744,7 +1924,7 @@ describe('GF-7 geofence alert events (real PostgreSQL/PostGIS integration)', () 
       );
     });
 
-    it('refuses to store anything but a crossing', async () => {
+    it('restricts stored transition labels to ENTER and EXIT', async () => {
       const [row] = await prisma.$queryRaw<Array<{ definition: string }>>`
         SELECT pg_get_constraintdef(oid) AS definition
         FROM pg_constraint

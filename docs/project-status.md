@@ -44,14 +44,14 @@ deactivation and failure paths create no new alert. Deduplication is a database
 unique key on
 `(tenantId, trackedDeviceId, geofenceId, sourceLocationEventId, transition)`
 combined with a conflict-safe insert, so one crossing is one alert across retries,
-replays and concurrent duplicates; a uniqueness conflict is idempotent success,
-not an error. The alert commits in the same transaction as the transition
+replays and concurrent duplicates; a crossing-key conflict is idempotent success
+when exact read-back recovers the alert. Unrelated conflicts fail safely. The alert commits in the same transaction as the transition
 advancement it describes, so an accepted crossing and its alert become durable
 together or neither does. Location-event creation remains outside that
 transaction, exactly as in GF-6: a failure there leaves the event stored, and an
 identical retry converges to exactly one alert unless a newer observation has
-superseded it. Alert ownership and source provenance are tenant-scoped and
-enforced by composite foreign keys, so a cross-tenant alert cannot be stored even
+superseded it. Composite foreign keys enforce tenant agreement, while the
+application copies device and timestamp provenance, so a cross-tenant alert cannot be stored even
 by a direct database write. The alert is exposed as one additive optional `alert`
 field on each transition entry of the existing ingestion response.
 

@@ -50,6 +50,7 @@ interface TransitionBody {
     | 'STAY_INSIDE'
     | 'STAY_OUTSIDE';
   stateAdvanced: boolean;
+  alert?: { id: string; createdAt: string };
 }
 
 interface EventBody {

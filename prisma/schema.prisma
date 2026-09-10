@@ -161,8 +161,8 @@ model Geofence {
 // itself resolved while advancing GF-6 transition state, inside that same
 // transaction. `transition` is constrained to ENTER and EXIT by a CHECK (see the
 // `geofence_alert_events` migration) — a baseline, a stay, a stale observation
-// and a retired state are not crossings, and PostgreSQL refuses to record one as
-// an alert even if application code asked it to.
+// and a retired state are not crossings. The CHECK only restricts labels;
+// application classification and its transaction establish spatial semantics.
 //
 // Deliberately absent: coordinates, the measured distance, the geofence radius
 // and any device or geofence snapshot. All of them are already reachable through
@@ -174,12 +174,13 @@ model Geofence {
 // rather than removed:
 //   * `severity` and `status` keep their pre-existing defaults. GF-7 never reads,
 //     advances or exposes them; acknowledgement and resolution are a later phase.
-//   * `eventType`, `message` and `source` become nullable and are left NULL. The
+//   * `eventType` and `message` become nullable; `source` was already nullable.
+//     All three are left NULL. The
 //     authoritative crossing type is the typed `transition` column, so writing it
 //     a second time as free text would create a value that can disagree with it,
 //     and inventing a human-readable `message` would be fabricating a
 //     notification template for a phase that sends nothing. Relaxing NOT NULL on
-//     three unused text columns removes no guarantee anything depended on: the
+//     two unused text columns removes no guarantee anything depended on: the
 //     row's meaning is carried entirely by typed columns and foreign keys, which
 //     this phase tightens.
 //   * `latitude` and `longitude` stay nullable and unwritten, with their existing
@@ -240,12 +241,9 @@ model AlertEvent {
   // tuple, so the database — not an application pre-check — collapses them into
   // one row.
   //
-  // `transition` is part of the key rather than assumed redundant. One
-  // observation can only own one crossing per geofence at a time, but a geofence
-  // whose centre or radius is edited can make that same stored observation cross
-  // the other way later, and that is a different crossing. Including the
-  // direction lets it be recorded honestly instead of being collapsed into — and
-  // mislabelled by — the earlier alert.
+  // Direction is an explicit component of crossing identity. A normal geometry
+  // edit does not let equal or older observations advance again: the strict
+  // observation ordering still applies.
   //
   // Named explicitly because Prisma's generated name for five columns is
   // truncated at PostgreSQL's 63-byte identifier limit and would be unreadable in

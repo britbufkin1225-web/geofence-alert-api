@@ -24,8 +24,8 @@ import { GeofenceTransition } from '@prisma/client';
  * The same two values are written into the `AlertEvent_transition_crossing_check`
  * CHECK constraint (see the `geofence_alert_events` migration). This constant is
  * where the application decides; the constraint is where PostgreSQL refuses. A
- * mistake here cannot produce a fabricated alert, because the database would
- * reject the row.
+ * non-crossing label is rejected by PostgreSQL. This CHECK does not verify
+ * spatial history: application classification and the transaction establish it.
  *
  * Dwell has no entry here. GF-6 declares no dwell classification and GF-7
  * invents none: a timer that fires without an observation is a different kind of

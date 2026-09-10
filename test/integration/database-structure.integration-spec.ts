@@ -267,7 +267,7 @@ describe('GF-3 database structure (disposable PostgreSQL/PostGIS)', () => {
       expect(rows.map((row) => row.constraint_name)).toEqual([
         'AlertEvent_latitude_range_check',
         'AlertEvent_longitude_range_check',
-        // GF-7: only a real boundary crossing may be stored as an alert.
+        // GF-7: only ENTER/EXIT labels may be stored as alerts.
         'AlertEvent_transition_crossing_check',
         'Geofence_latitude_range_check',
         'Geofence_longitude_range_check',

@@ -407,7 +407,7 @@ Verified test state after GF-7:
 
 ```text
 Unit + HTTP     Test Suites: 18 passed   Tests: 437 passed
-Integration     Test Suites: 9 passed    Tests: 315 passed
+Integration     Test Suites: 9 passed    Tests: 322 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 

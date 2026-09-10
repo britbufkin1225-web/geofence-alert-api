@@ -59,9 +59,10 @@ The policy lives in one place,
 [`geofence-alert.policy.ts`](../src/location-events/geofence-alert.policy.ts),
 and the same two values are written into the `AlertEvent_transition_crossing_check`
 CHECK constraint. The constant is where the application decides; the constraint is
-where PostgreSQL refuses. A mistake in the former cannot produce a fabricated
-alert, because the database rejects the row — including for a direct SQL session
-that bypasses the service entirely.
+where PostgreSQL rejects other labels. The CHECK does not verify spatial history.
+A direct SQL session can fabricate an ENTER/EXIT with tenant-consistent references.
+Application classification and its transaction establish crossing semantics and
+copy provenance; foreign keys do not prove source-device or timestamp equality.
 
 ## What an alert stores
 
@@ -95,11 +96,12 @@ defers. They are reconciled conservatively rather than removed:
 
 - `severity` and `status` keep their pre-existing defaults (`MEDIUM`, `OPEN`).
   GF-7 never reads, advances or exposes them.
-- `eventType`, `message` and `source` become nullable and are left `NULL`. The
+- `eventType` and `message` become nullable; `source` was already nullable.
+  All three are left `NULL`. The
   authoritative crossing type is the typed `transition` column, so writing it a
   second time as free text would create a value that can disagree with it, and
   inventing a human-readable `message` would be fabricating a notification
-  template for a phase that sends nothing. Relaxing `NOT NULL` on three unused
+  template for a phase that sends nothing. Relaxing `NOT NULL` on two unused
   text columns removes no guarantee anything depended on: the row's meaning is
   carried entirely by typed columns and foreign keys, which this phase tightens.
 - `latitude` and `longitude` stay nullable and unwritten, with their existing
@@ -124,15 +126,13 @@ There is deliberately **no** "does it already exist?" read before the write: tha
 check and the write it guards cannot be made atomic with respect to another
 connection doing the same thing, so two concurrent replays would both find
 nothing and both insert. Here the second writer's row is discarded by PostgreSQL,
-on the index, and a uniqueness conflict is therefore a **successful idempotent
-outcome** rather than an error to translate into a 500.
+on the index. A crossing-key conflict is successful only when exact read-back
+recovers the required alert; unrelated conflicts fail and roll back advancement.
 
-**Why `transition` is part of the key.** One observation can only own one crossing
-per geofence at a time, so the direction looks redundant. It is not: a geofence
-whose centre or radius is edited can make that same stored observation cross the
-other way later, and that is a different crossing. Including the direction lets it
-be recorded honestly instead of being collapsed into — and mislabelled by — the
-earlier alert.
+**Direction in the key.** The identity explicitly includes ENTER/EXIT. A normal
+geometry edit cannot make an equal or older event advance again: the strict
+observation ordering still applies. The key is retained unchanged; it does not
+promise reclassification of historical observations after geometry edits.
 
 ## Transaction boundary
 
@@ -149,13 +149,12 @@ row moves on, nothing can reconstruct that a boundary was crossed. An `ENTER` th
 committed without its alert would therefore be an unrecoverable gap, not a
 temporary one.
 
-The coupling is **load-bearing, not merely intended**. The alert read-back joins
-`GeofenceDeviceState` on the full crossing identity, and when an observation
-advances state that row is not yet committed — visible only from inside the same
-transaction. Running the alert step on any other connection returns nothing and
-fails the request instead of quietly recording an alert beside a transition that
-may never commit. This is proven by mutation, not asserted: see
-[Adversarial verification](#adversarial-verification).
+The transaction client is the atomicity boundary. Read-back joins the current
+state on crossing identity and sees its uncommitted writes. This is an additional
+consistency check, not a substitute for sharing the transaction: an out-of-
+transaction insert could already commit before a read-back failure. The committed
+rollback tests exercise the actual transaction path. The uncommitted mutation
+report is historical context only; see [Adversarial verification](#adversarial-verification).
 
 ### The limitation that remains
 
@@ -178,7 +177,8 @@ No automatic retry, queue or background repair exists.
 
 Replay and repair are the same code path as first arrival. A candidate alert is
 produced whenever the current transition state of a geofence is a crossing owned
-by this event — true on the request that advanced it and on every later replay.
+by this event — true on the advancing request and on replays only while it still owns state.
+After supersession, replay follows stale suppression and returns no alert.
 
 - **First arrival** inserts.
 - **A replay** conflicts on the unique index and reuses the stored row, returning
@@ -194,6 +194,18 @@ was accepted that the database has no record of, and more means the read-back
 matched something other than the crossings just accepted. Either fails the request
 inside the transaction, rolling the transition advancement back with it, so the
 crossing stays re-derivable by the next replay.
+
+Arrival order is intentionally significant. Newest-first arrival can establish
+a baseline and suppress older events, producing zero alerts. Chronological
+arrival can reach the same latest position through a crossing and produce an
+alert. Latest containment may converge; transition and alert histories need not.
+
+## Migration precondition
+
+The five required columns have no backfill defaults. Deployment requires the
+legacy AlertEvent table to be empty; repository absence of a writer does not
+prove deployed contents. Nonempty tables fail migration and require an explicit
+data migration plan. Verify contents before deployment.
 
 ## Concurrency
 
@@ -256,7 +268,8 @@ already stated by the enclosing entry and the response body, and a second copy
 could appear to disagree.
 
 Not exposed at all: the deduplication key, `severity`, `status`, and any database
-or constraint detail. A uniqueness conflict never reaches the client as an error.
+or constraint detail. An unrelated uniqueness collision fails with a sanitized error if exact
+read-back cannot recover the required alert.
 
 ## Ownership boundaries
 
@@ -303,8 +316,10 @@ reported.
 
 ## Adversarial verification
 
-Ten plausible defects were applied one at a time, the focused suite was run, and
-the original was restored. All ten were detected. Nothing was committed.
+The implementation author reported the following scratchpad mutations. The
+mutation harness and outputs were not committed, so these are historical claims,
+not independently reproducible audit evidence. Committed regression tests and
+independent audit results are the verification record.
 
 | # | Defect | Detected by |
 | --- | --- | --- |

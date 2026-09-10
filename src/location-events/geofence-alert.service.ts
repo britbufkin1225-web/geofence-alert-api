@@ -51,14 +51,15 @@ export class GeofenceAlertService {
    *
    * Replay and repair are the same code path as first arrival. A candidate is
    * produced whenever the current state of a geofence is a crossing owned by
-   * this event, which is true on the request that advanced it and on every later
-   * replay of that request. First arrival inserts; a replay conflicts and reuses;
+   * this event, on the advancing request and replays while it still owns state.
+   * First arrival inserts; a replay conflicts and reuses;
    * a replay after a failure that lost the alert inserts the missing one. None
    * of the three needs to know which it is.
    *
    * `tenantId` is the authoritative value from the verified principal, and the
    * device, geofence, direction and observation instant all come from the
-   * database rows. Nothing a caller sent reaches an alert row.
+   * stored rows. The original observation time and deviceKey came from validated
+   * ingestion input; alert-specific provenance is not accepted from a caller.
    */
   async record(
     tx: Prisma.TransactionClient,

@@ -123,8 +123,7 @@ describe('GeofenceAlertService', () => {
     ])('records nothing for a %s that advanced state', async (transition) => {
       await record([row({ advancedTransition: transition })]);
 
-      // Not "called with an empty list": not called at all. A baseline must not
-      // even reach the alert table.
+      // The empty candidate list makes the query return without touching the table.
       expect(persistAndRead).toHaveBeenCalledWith(tx, TENANT, EVENT_ID, []);
     });
 

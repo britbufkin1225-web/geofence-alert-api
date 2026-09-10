@@ -105,8 +105,8 @@ Constraints and indexes:
   conflict-safe insert: one accepted crossing is one alert, whatever the retry,
   replay or race.
 - `AlertEvent_transition_crossing_check` — `CHECK ("transition" IN ('ENTER','EXIT'))`.
-  A baseline, a stay or a stale observation cannot be recorded as an alert by any
-  code path, including a direct SQL session.
+  This restricts labels, not spatial history. Direct SQL can insert an allowed
+  label without a genuine crossing; application logic establishes that meaning.
 - Three composite foreign keys on `(id, tenantId)` — onto `Geofence`,
   `TrackedDevice` and `LocationEvent`, all `ON DELETE CASCADE`. A cross-tenant
   alert is rejected by PostgreSQL, not merely avoided by the service. The GF-1
@@ -118,12 +118,12 @@ Constraints and indexes:
   and device lookups need no index of their own: they are the leading columns of
   the unique key.
 
-The legacy `eventType`, `message` and `source` columns were relaxed to nullable by
-the GF-7 migration and are deliberately left `NULL`. The authoritative crossing
+Only `eventType` and `message` become nullable in GF-7; `source` was already
+nullable. All three are deliberately left `NULL`. The authoritative crossing
 type is the typed `transition` column, so writing it again as free text would
 create a value that can disagree with it, and inventing a `message` would
-fabricate a notification template for a phase that sends nothing. No coordinate,
-distance, delivery, dwell or acknowledgement column exists.
+fabricate a notification template for a phase that sends nothing. Legacy latitude/longitude and status columns remain, but GF-7 does not use them.
+No distance, delivery or dwell column is added.
 
 See [gf7-geofence-alert-events.md](gf7-geofence-alert-events.md).
 

@@ -37,13 +37,13 @@ iterating after `npm run test:db -- --keep`.
 ## Current Verified Test State
 
 The counts below include the GF-7 alert suites. The focused GF-6 integration
-suite contains 54 tests; the focused GF-7 integration suite contains 52, of which
-four are controlled concurrency interleavings confirmed through
+suite contains 54 tests; the focused GF-7 integration suite contains 59, of which
+eight are controlled concurrency interleavings confirmed through
 `pg_blocking_pids` rather than parallel-request bursts.
 
 ```text
 Unit + HTTP     Test Suites: 18 passed   Tests: 437 passed
-Integration     Test Suites: 9 passed    Tests: 315 passed
+Integration     Test Suites: 9 passed    Tests: 322 passed
 E2E             Test Suites: 1 passed    Tests: 1 passed
 ```
 

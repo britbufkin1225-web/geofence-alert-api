@@ -257,7 +257,8 @@ Semantics:
   superseded observation are successful classifications that are not crossings,
   and GF-7 records an alert for nothing else.
 - `alert.id` is the stable identity of one durable alert event. It is identical on
-  every retry and replay of the same observation: one crossing is one alert.
+  replay while the event still owns crossing state. Superseded replays return
+  no alert; the previously stored alert remains unchanged.
 - `alert.createdAt` is when this server recorded the alert. On a replay it is the
   **original** recording time, not the time of the replay, which is what
   distinguishes an idempotent reuse from a second alert.
@@ -266,14 +267,16 @@ Semantics:
 - Deduplication is a database unique index on
   `(tenantId, trackedDeviceId, geofenceId, sourceLocationEventId, transition)`,
   combined with a conflict-safe insert. A uniqueness conflict is a successful
-  idempotent outcome and never surfaces as an error.
+  idempotent outcome only if exact read-back finds the required alert. An
+  unrelated uniqueness collision fails safely and rolls back advancement.
 - The alert commits in the same transaction as the transition advancement it
   describes. Location-event creation remains outside that transaction, exactly as
   in GF-6: a failure there returns 500 with the event stored, and an identical
   retry converges to exactly one alert if no newer observation has superseded it.
 - Alert ownership is derived only from the verified principal and stored rows.
-  Caller-supplied tenant, device, geofence, direction or timestamp values are
-  rejected as unknown properties and never reach an alert.
+  Alert-specific identity fields are not accepted. The request does supply
+  a deviceKey and observedAt for ingestion; these are validated and stored
+  before alert provenance is copied from the resolved event.
 - Alert listing, acknowledgement, resolution and delivery are **not** part of
   GF-7 and have no endpoint.
 
